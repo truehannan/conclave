@@ -1,22 +1,45 @@
 import os
 from pathlib import Path
 
-BASE_DIR = Path(os.getenv("SYNTHCLAW_BASE_DIR", "/opt/agent"))
+# Load .env file if present (for local development / non-systemd usage)
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(os.getenv("SYNTHCLAW_BASE_DIR", "/opt/agent")) / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path)
+    else:
+        # Also check current directory
+        _local_env = Path(".env")
+        if _local_env.exists():
+            load_dotenv(_local_env)
+except ImportError:
+    pass  # python-dotenv not installed, rely on system environment
+
+
+def _clean_env(key: str, default: str = "") -> str:
+    """Get env var and strip quotes + whitespace (guards against systemd EnvironmentFile quoting)."""
+    val = os.getenv(key, default).strip()
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+        val = val[1:-1]
+    return val
+
+
+BASE_DIR = Path(_clean_env("SYNTHCLAW_BASE_DIR", "/opt/agent"))
 WORKSPACE_DIR = BASE_DIR / "workspace"
 MEDIA_DIR = WORKSPACE_DIR / "media"
 DB_PATH = BASE_DIR / "agent.db"
 LOG_PATH = BASE_DIR / "agent.log"
 
-INTERFACE_MODE = os.getenv("INTERFACE_MODE", "telegram").strip().lower()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+INTERFACE_MODE = _clean_env("INTERFACE_MODE", "telegram").lower()
+TELEGRAM_TOKEN = _clean_env("TELEGRAM_TOKEN")
 
 # Discord support removed; keep Telegram-only
 # Provide TELEGRAM_TOKEN in .env file (never commit secrets)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://inference.do-ai.run/v1").strip()
-OPENROUTER_API_BASE = os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1").strip()
-GITHUB_MODELS_API_BASE = os.getenv("GITHUB_MODELS_API_BASE", "https://models.inference.ai.azure.com").strip()
+OPENAI_API_KEY = _clean_env("OPENAI_API_KEY")
+OPENAI_API_BASE = _clean_env("OPENAI_API_BASE", "https://inference.do-ai.run/v1")
+OPENROUTER_API_BASE = _clean_env("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1")
+GITHUB_MODELS_API_BASE = _clean_env("GITHUB_MODELS_API_BASE", "https://models.inference.ai.azure.com")
 
 DEFAULT_MODEL = "llama3.3-70b-instruct"
 MODEL_CATALOG = {
