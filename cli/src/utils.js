@@ -85,7 +85,10 @@ export function generateEnvContent() {
   lines.push(`OPENAI_API_BASE=${config.get("openai_api_base")}`);
   lines.push(`DEFAULT_MODEL=${config.get("default_model")}`);
   lines.push("");
-  lines.push(`SYNTHCLAW_BASE_DIR=${config.get("base_dir")}`);
+  // Use actual project root for SYNTHCLAW_BASE_DIR (not the config default)
+  // This ensures Python finds agent.log, agent.db, workspace/ in the right place
+  const actualRoot = getProjectRoot();
+  lines.push(`SYNTHCLAW_BASE_DIR=${actualRoot}`);
   lines.push(`MAX_TOOL_ITERATIONS=${config.get("max_tool_iterations")}`);
   lines.push(`MAX_HISTORY_MESSAGES=${config.get("max_history_messages")}`);
   lines.push("");

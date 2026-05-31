@@ -30,6 +30,10 @@ MEDIA_DIR = WORKSPACE_DIR / "media"
 DB_PATH = BASE_DIR / "agent.db"
 LOG_PATH = BASE_DIR / "agent.log"
 
+# Ensure base directories exist (prevents FileNotFoundError on first run)
+BASE_DIR.mkdir(parents=True, exist_ok=True)
+WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+
 INTERFACE_MODE = _clean_env("INTERFACE_MODE", "telegram").lower()
 TELEGRAM_TOKEN = _clean_env("TELEGRAM_TOKEN")
 
