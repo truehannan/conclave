@@ -31,27 +31,39 @@ function createVenv(root) {
 
   const venvDir = join(root, "venv");
 
-  // Try creating venv — if it fails, install python3-venv package and retry
+  // Try creating venv — if it fails, install the correct venv package and retry
   try {
     execSync(`${systemPython} -m venv "${venvDir}"`, { encoding: "utf-8", cwd: root, timeout: 30000 });
   } catch (err) {
-    // On Ubuntu/Debian, python3-venv may not be installed
-    const errMsg = (err.stderr || err.message || "").toLowerCase();
-    if (errMsg.includes("ensurepip") || errMsg.includes("no module") || errMsg.includes("returned non-zero")) {
-      // Try installing python3-venv
+    const errMsg = (err.stderr || err.stdout || err.message || "");
+    if (errMsg.includes("ensurepip") || errMsg.includes("not created successfully") || errMsg.includes("returned non-zero")) {
+      // Detect Python version to install correct package (python3.12-venv, not python3-venv)
+      let pyVersion = "";
       try {
-        execSync("apt-get update -qq && apt-get install -y -qq python3-venv python3-pip", {
-          encoding: "utf-8", timeout: 60000,
+        const verOut = execSync(`${systemPython} --version`, { encoding: "utf-8" }).trim();
+        const match = verOut.match(/(\d+\.\d+)/);
+        if (match) pyVersion = match[1]; // e.g. "3.12"
+      } catch {}
+
+      // Install the version-specific venv package
+      const packages = pyVersion
+        ? `python${pyVersion}-venv python3-venv python3-pip`
+        : "python3-venv python3-pip";
+
+      try {
+        execSync(`apt-get update -qq && apt-get install -y -qq ${packages}`, {
+          encoding: "utf-8", timeout: 90000,
         });
       } catch {
-        // Also try without apt-get update
         try {
-          execSync("apt-get install -y -qq python3-venv python3-pip 2>/dev/null || yum install -y python3-pip 2>/dev/null || true", {
-            encoding: "utf-8", timeout: 30000,
+          execSync(`apt-get install -y ${packages} 2>/dev/null || yum install -y python3-pip 2>/dev/null || true`, {
+            encoding: "utf-8", timeout: 60000,
           });
         } catch {}
       }
-      // Retry venv creation
+
+      // Clean up failed venv attempt and retry
+      try { execSync(`rm -rf "${venvDir}"`, { encoding: "utf-8" }); } catch {}
       execSync(`${systemPython} -m venv "${venvDir}"`, { encoding: "utf-8", cwd: root, timeout: 30000 });
     } else {
       throw err;
