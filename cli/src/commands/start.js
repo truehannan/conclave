@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import ora from "ora";
-import { existsSync } from "fs";
+import { existsSync, writeFileSync } from "fs";
 import { join } from "path";
 import { execSync, spawn } from "child_process";
 import { config, getProjectRoot, generateEnvContent, printSuccess, printError, printInfo } from "../utils.js";
@@ -164,18 +164,18 @@ export async function runStart(args) {
   }
 
   if (canSystemd) {
-    // Install service if not present
-    if (!hasSystemdService()) {
-      spinner.text = "Installing systemd service...";
-      try {
-        installSystemdService(root);
-        spinner.text = "Starting agent via systemd...";
-      } catch (err) {
-        spinner.fail("Could not install systemd service");
-        printError(err.message);
-        printInfo("Falling back to nohup...");
-        canSystemd = false;
-      }
+    // Always regenerate service + .env to pick up any path/config changes
+    spinner.text = "Configuring systemd service...";
+    try {
+      // Write fresh .env from stored config (ensures no stale/quoted values)
+      writeFileSync(join(root, ".env"), generateEnvContent());
+      installSystemdService(root);
+      spinner.text = "Starting agent via systemd...";
+    } catch (err) {
+      spinner.fail("Could not install systemd service");
+      printError(err.message);
+      printInfo("Falling back to nohup...");
+      canSystemd = false;
     }
 
     if (canSystemd) {
@@ -213,6 +213,9 @@ export async function runStart(args) {
   // Fallback: nohup (works without root/systemd)
   const pythonBin = findPython(root);
   const pidFile = join(root, "agent.pid");
+
+  // Write fresh .env from stored config
+  try { writeFileSync(join(root, ".env"), generateEnvContent()); } catch {}
 
   // Check if already running via pid
   if (existsSync(pidFile)) {
