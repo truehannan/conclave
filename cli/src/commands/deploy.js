@@ -58,15 +58,12 @@ export async function runDeploy(args) {
   const spinner2 = ora("Writing .env configuration...").start();
   try {
     const envContent = generateEnvContent();
-    const escaped = envContent.replace(/'/g, "'\\''");
+    // Use base64 to safely transfer .env content over SSH (avoids shell quoting issues)
+    const b64 = Buffer.from(envContent).toString("base64");
     execSync(
-      `ssh ${user}@${host} 'cat > ${baseDir}/.env << '"'"'ENVEOF'"'"'\n${escaped}\nENVEOF'`,
+      `ssh ${user}@${host} 'echo "${b64}" | base64 -d > ${baseDir}/.env && chmod 600 ${baseDir}/.env'`,
       { encoding: "utf-8", timeout: 10000 }
     );
-    execSync(`ssh ${user}@${host} 'chmod 600 ${baseDir}/.env'`, {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
     spinner2.succeed(".env written");
   } catch (err) {
     spinner2.fail(".env write failed");
