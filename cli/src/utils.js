@@ -30,19 +30,35 @@ export const config = new Conf({
 
 /**
  * Get the project root (where the Python agent files live).
- * Walks up from cli/ to find main.py.
+ * Checks multiple locations in priority order.
  */
 export function getProjectRoot() {
-  // When installed globally via npm link, the project root is ../
+  // 1. Check current working directory
+  if (existsSync(join(process.cwd(), "main.py"))) return process.cwd();
+
+  // 2. Walk up from the source file location (works when running from cli/src)
   let dir = new URL(".", import.meta.url).pathname;
-  // Walk up to find main.py
   for (let i = 0; i < 5; i++) {
     if (existsSync(join(dir, "main.py"))) return dir;
     dir = resolve(dir, "..");
   }
-  // Fallback: base_dir from config
+
+  // 3. Check base_dir from config
   const baseDir = config.get("base_dir");
   if (existsSync(join(baseDir, "main.py"))) return baseDir;
+
+  // 4. Common install paths
+  const commonPaths = [
+    join(process.env.HOME || "/root", "synthclaw"),
+    join(process.env.HOME || "/root", "synthclaw-coagent"),
+    "/opt/agent",
+    "/root/synthclaw",
+    "/root/synthclaw-coagent",
+  ];
+  for (const p of commonPaths) {
+    if (existsSync(join(p, "main.py"))) return p;
+  }
+
   return process.cwd();
 }
 
