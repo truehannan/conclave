@@ -968,15 +968,30 @@ async def run_agent(
         except Exception as me:
             logger.error(f"mem.save_message (user) failed: {me}")
         _invalidate_context_cache(chat_id)
-        mem.clear_task_state(chat_id)   # discard any stale checkpoint
 
-        # Smart context: summarize old messages if needed, then build enriched context
-        try:
-            _maybe_summarize(chat_id)
-            messages = _build_context(chat_id, force_refresh=True)
-        except Exception as me:
-            logger.error(f"Context build failed: {me}")
-            messages = [{"role": "system", "content": SYSTEM_PROMPT.format(tools=get_tools_description())}]
+        # Check if there's a saved task state to resume from
+        saved_state = mem.load_task_state(chat_id)
+        if saved_state and saved_state.get("messages"):
+            # Resume from where we left off — append the new user message to saved context
+            logger.info(f"Resuming from saved state (step {saved_state['step_count']}) for chat {chat_id}")
+            messages = list(saved_state["messages"])
+            messages.append({"role": "user", "content": user_message})
+            media_to_send = list(saved_state.get("media") or [])
+            resume_step = saved_state.get("step_count", 0)
+            resume_attempt_step = saved_state.get("attempt_step", 0)
+            stall_count = saved_state.get("stall_count", 0)
+            last_sig = saved_state.get("last_sig", "")
+            last_error = saved_state.get("last_error", "")
+            mem.clear_task_state(chat_id)
+        else:
+            mem.clear_task_state(chat_id)
+            # Smart context: summarize old messages if needed, then build enriched context
+            try:
+                _maybe_summarize(chat_id)
+                messages = _build_context(chat_id, force_refresh=True)
+            except Exception as me:
+                logger.error(f"Context build failed: {me}")
+                messages = [{"role": "system", "content": SYSTEM_PROMPT.format(tools=get_tools_description())}]
 
     # Mark task as active (can be stopped via /stop)
     ACTIVE_TASKS[chat_id] = True
@@ -1039,30 +1054,27 @@ async def run_agent(
         except Exception as e:
             logger.error(f"LLM error at step {global_step}: {e}")
             ACTIVE_TASKS.pop(chat_id, None)
-            # If we've done some work already (including resumed tasks), save state so user can Continue
-            if iteration > 0 or resume_step > 0:
-                sig = _checkpoint_signature(messages)
-                err_text = str(e)
-                err_hash = hashlib.sha1(err_text.encode("utf-8", errors="ignore")).hexdigest()
-                if sig and sig == last_sig and err_hash == last_error:
-                    stall_count += 1
-                else:
-                    stall_count = 0
-                mem.save_task_state(
-                    chat_id,
-                    messages,
-                    media_to_send,
-                    model,
-                    max(global_step, resume_step + 1),
-                    attempt_step=max(attempt_step, resume_attempt_step + 1),
-                    stall_count=stall_count,
-                    last_sig=sig,
-                    last_error=err_hash,
-                )
-                _task_set(chat_id, status="paused", phase="llm_error", step=max(global_step, resume_step + 1), attempt=max(attempt_step, resume_attempt_step + 1), stall=stall_count, last_error=str(e)[:180])
-                return CHECKPOINT_SIGNAL, media_to_send
-            _task_set(chat_id, status="error", phase="llm_error", step=global_step, attempt=attempt_step, last_error=str(e)[:180])
-            return f"❌ LLM error: {e}", media_to_send
+            # Always save state on error so next message can resume
+            sig = _checkpoint_signature(messages)
+            err_text = str(e)
+            err_hash = hashlib.sha1(err_text.encode("utf-8", errors="ignore")).hexdigest()
+            if sig and sig == last_sig and err_hash == last_error:
+                stall_count += 1
+            else:
+                stall_count = 0
+            mem.save_task_state(
+                chat_id,
+                messages,
+                media_to_send,
+                model,
+                max(global_step, resume_step + 1),
+                attempt_step=max(attempt_step, resume_attempt_step + 1),
+                stall_count=stall_count,
+                last_sig=sig,
+                last_error=err_hash,
+            )
+            _task_set(chat_id, status="paused", phase="llm_error", step=max(global_step, resume_step + 1), attempt=max(attempt_step, resume_attempt_step + 1), stall=stall_count, last_error=str(e)[:180])
+            return f"❌ LLM error: {e}\n\nYour progress is saved — send another message to continue.", media_to_send
 
         # Track token usage per model
         try:
@@ -2157,25 +2169,35 @@ async def cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Skill not found: {name}")
         return
 
-    # /skills install <url>
+    # /skills install <url> [url2] [url3] — bulk install
     if args[0] == "install" and len(args) > 1:
         import zipfile
         import io
-        url = args[1]
-        await update.message.reply_text(f"⬇️ Downloading skill from {url}...")
-        try:
-            resp = __import__("requests").get(url, timeout=30)
-            resp.raise_for_status()
-            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-                zf.extractall(SKILLS_DIR)
-            # Find what was extracted
-            new_skills = _list_skills()
-            await update.message.reply_text(f"✅ Skill installed. Total skills: {len(new_skills)}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Install failed: {e}")
+        urls = args[1:]
+        installed = 0
+        errors = []
+        for url in urls:
+            try:
+                if not url.endswith(".zip"):
+                    errors.append(f"{url}: not a .zip file")
+                    continue
+                resp = __import__("requests").get(url, timeout=30)
+                resp.raise_for_status()
+                with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                    zf.extractall(SKILLS_DIR)
+                installed += 1
+            except Exception as e:
+                errors.append(f"{url}: {e}")
+        new_skills = _list_skills()
+        reply_lines = [f"✅ Installed {installed}/{len(urls)} skill(s). Total: {len(new_skills)}"]
+        if errors:
+            reply_lines.append("\nErrors:")
+            for err in errors:
+                reply_lines.append(f"  ❌ {err}")
+        await update.message.reply_text("\n".join(reply_lines))
         return
 
-    await update.message.reply_text("Usage: /skills | /skills remove <name> | /skills install <url>\nOr send a .zip file to install.")
+    await update.message.reply_text("Usage: /skills | /skills remove <name> | /skills install <url> [url2...]\nOr send .zip file(s) to install. Only .zip files accepted.")
 
 
 # ── Media helpers ─────────────────────────────────────────────────────────────
@@ -2243,59 +2265,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-    # ── Real-time progress message ──────────────────────────────────────────
-    # Send a "working..." message that we edit in place as tools execute
-    progress_msg = None
-    progress_lines: list[str] = []
-    progress_step = [0]
-
-    async def _update_progress(tool_name: str = "", status: str = "⏳"):
-        """Edit the progress message in place to show live task updates."""
-        nonlocal progress_msg
-        progress_step[0] += 1
-        if tool_name:
-            progress_lines.append(f"{status} {tool_name}")
-        # Build display text
-        header = f"🔄 Working... (step {progress_step[0]})\n"
-        # Show last 8 steps to keep message short
-        visible = progress_lines[-8:]
-        body = "\n".join(visible)
-        text = header + body
-        try:
-            if progress_msg is None:
-                progress_msg = await update.message.reply_text(text)
-            else:
-                await progress_msg.edit_text(text)
-        except Exception:
-            pass  # Telegram rate limits or message unchanged
-
     async def _send(text):
-        """Send intermediate text from agent and update progress."""
+        """Send intermediate progress text as a separate message."""
         if text and len(text.strip()) > 3:
-            progress_lines.append(f"💬 {text[:100]}")
-            await _update_progress()
+            for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+                await update.message.reply_text(chunk)
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
     try:
         reply, media_items = await run_agent(chat_id, update.message.text, model, send_fn=_send)
 
-        # Delete progress message before sending final reply
-        if progress_msg:
-            try:
-                await progress_msg.delete()
-            except Exception:
-                pass
-
         if reply == CHECKPOINT_SIGNAL:
             state = mem.load_task_state(chat_id)
             step = state["step_count"] if state else "?"
             await update.message.reply_text(
-                f"⏸️ Task paused after {step} steps — tap the button to keep going.",
+                f"⏸️ Task paused after {step} steps — tap Continue to keep going.",
                 reply_markup=_continue_button(chat_id, step),
             )
         else:
             if not reply or not reply.strip():
-                reply = "_(got an empty response — try rephrasing or /clear to reset history)_"
+                reply = "_(empty response — try rephrasing or /clear)_"
             for chunk in [reply[i:i+4000] for i in range(0, len(reply), 4000)]:
                 await update.message.reply_text(chunk)
         await _send_queued_media(update, media_items)
@@ -2303,25 +2292,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except asyncio.CancelledError:
         _task_set(chat_id, status="stopped", phase="cancelled")
         ACTIVE_TASKS.pop(chat_id, None)
-        if progress_msg:
-            try:
-                await progress_msg.edit_text("🛑 Task stopped.")
-            except Exception:
-                pass
-        try:
-            await update.message.reply_text("🛑 Task stopped.")
-        except Exception:
-            pass
+        await update.message.reply_text("🛑 Task stopped. Send another message to continue from where it left off.")
         return
     except Exception as e:
         logger.error(f"handle_message error: {e}", exc_info=True)
         _task_set(chat_id, status="error", phase="handler_exception", last_error=str(e)[:180])
-        if progress_msg:
-            try:
-                await progress_msg.edit_text(f"❌ Error: {e}")
-            except Exception:
-                pass
-        await update.message.reply_text(f"❌ {e}")
+        # Save state on error so next message can resume
+        await update.message.reply_text(f"❌ Error: {e}\n\nSend your message again to retry — it will continue from where it stopped.")
     finally:
         if RUNNING_TASKS.get(chat_id) is asyncio.current_task():
             RUNNING_TASKS.pop(chat_id, None)
@@ -2393,11 +2370,14 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     zf.extractall(SKILLS_DIR)
                     skills = _list_skills()
                     await update.message.reply_text(
-                        f"📦 Skill installed from zip!\n"
+                        f"📦 Skill installed!\n"
                         f"Total skills: {len(skills)}\n"
-                        f"Use /skills to see all installed skills."
+                        f"Use /skills to see all."
                     )
                     return
+                else:
+                    # It's a zip but not a skill — still save as document, don't auto-install
+                    pass
         except zipfile.BadZipFile:
             pass  # Not a valid zip, continue normal processing
         except Exception as e:
