@@ -285,10 +285,34 @@ def service_status(name: str = None) -> dict:
 
 
 def store_cred(name: str, value: str, description: str = "") -> dict:
-    """Store an encrypted credential."""
+    """Store an encrypted credential. Auto-detects and registers known APIs."""
     try:
         store_credential(name, value, description)
-        return {"success": True, "stored": name}
+        result = {"success": True, "stored": name}
+
+        # Auto-detect: is this credential for a known API?
+        from known_apis import detect_api_from_key
+        from memory import register_dynamic_tool, get_dynamic_tool
+
+        detected = detect_api_from_key(value, f"{name} {description}")
+        if detected and not get_dynamic_tool(detected["name"]):
+            # Auto-register the API
+            register_dynamic_tool(
+                name=detected["name"],
+                base_url=detected["base_url"],
+                auth_cred=name,  # use the credential name the user just stored
+                auth_type=detected.get("auth_type", "bearer"),
+                auth_header=detected.get("auth_header", "Authorization"),
+                auth_prefix=detected.get("auth_prefix", "Bearer "),
+                endpoints=detected.get("endpoints", []),
+                description=detected.get("description", ""),
+                docs_url=detected.get("docs_url", ""),
+            )
+            result["api_registered"] = detected["name"]
+            result["api_description"] = detected.get("description", "")
+            result["api_endpoints"] = len(detected.get("endpoints", []))
+
+        return result
     except Exception as e:
         return {"error": str(e)}
 
@@ -1044,6 +1068,195 @@ def redis_set(key: str, value: str, ttl: int = 0, host: str = "127.0.0.1", port:
         return {"error": str(e)}
 
 
+# ── Dynamic API tools ─────────────────────────────────────────────────────────
+
+def register_api(name: str, base_url: str, auth_cred: str, auth_type: str = "bearer",
+                 auth_header: str = "Authorization", auth_prefix: str = "Bearer ",
+                 endpoints: str = "[]", description: str = "", docs_url: str = "") -> dict:
+    """Register an external API as a callable tool. After registration, the agent can call it via api_call.
+    auth_type: bearer, header, query, basic, body.
+    endpoints: JSON string of [{method, path, desc}] — key operations this API supports.
+    """
+    from memory import register_dynamic_tool
+    from known_apis import detect_api_from_key, KNOWN_APIS
+
+    name = name.lower().strip().replace(" ", "_")
+
+    # Try to auto-detect from known APIs if minimal info given
+    if not base_url or base_url == "auto":
+        detected = None
+        # Check by name
+        if name in KNOWN_APIS:
+            detected = KNOWN_APIS[name]
+        # Check by credential prefix
+        if not detected:
+            cred_val = get_credential(auth_cred) or ""
+            detected = detect_api_from_key(cred_val, name)
+        if detected:
+            base_url = detected["base_url"]
+            auth_type = detected.get("auth_type", auth_type)
+            auth_header = detected.get("auth_header", auth_header)
+            auth_prefix = detected.get("auth_prefix", auth_prefix)
+            description = detected.get("description", description)
+            docs_url = detected.get("docs_url", docs_url)
+            endpoints = json.dumps(detected.get("endpoints", []))
+
+    if not base_url:
+        return {"error": "Could not determine base_url. Provide it explicitly or use a known API name."}
+
+    # Parse endpoints
+    try:
+        ep_list = json.loads(endpoints) if isinstance(endpoints, str) else endpoints
+    except json.JSONDecodeError:
+        ep_list = []
+
+    register_dynamic_tool(
+        name=name,
+        base_url=base_url,
+        auth_cred=auth_cred,
+        auth_type=auth_type,
+        auth_header=auth_header,
+        auth_prefix=auth_prefix,
+        endpoints=ep_list,
+        description=description,
+        docs_url=docs_url,
+    )
+    return {
+        "success": True,
+        "name": name,
+        "base_url": base_url,
+        "auth_type": auth_type,
+        "endpoints_count": len(ep_list),
+        "description": description,
+    }
+
+
+def api_call(api: str, method: str = "GET", path: str = "/", body: str = "",
+             query_params: str = "", headers: str = "") -> dict:
+    """Call a registered API. The agent uses this to hit any previously registered external API.
+    api: name of the registered API (e.g. 'stripe', 'vercel', 'cloudflare')
+    method: HTTP method (GET, POST, PUT, DELETE, PATCH)
+    path: endpoint path (e.g. '/charges', '/v9/projects')
+    body: JSON body for POST/PUT/PATCH (string)
+    query_params: URL query string (e.g. 'limit=10&status=active')
+    headers: additional headers as JSON object string (optional)
+    """
+    from memory import get_dynamic_tool, get_credential
+
+    tool = get_dynamic_tool(api)
+    if not tool:
+        return {"error": f"API '{api}' not registered. Use register_api first or provide the credential."}
+    if not tool.get("enabled"):
+        return {"error": f"API '{api}' is disabled."}
+
+    # Get auth credential
+    cred_value = get_credential(tool["auth_cred"])
+    if not cred_value:
+        return {"error": f"Credential '{tool['auth_cred']}' not found. Store it with store_cred."}
+
+    # Build URL
+    base = tool["base_url"].rstrip("/")
+    endpoint = path if path.startswith("/") or path.startswith("?") else f"/{path}"
+    url = f"{base}{endpoint}"
+    if query_params:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}{query_params}"
+
+    # Build auth headers
+    req_headers = {"Content-Type": "application/json"}
+    auth_type = tool.get("auth_type", "bearer")
+
+    if auth_type == "bearer":
+        prefix = tool.get("auth_prefix", "Bearer ")
+        req_headers[tool.get("auth_header", "Authorization")] = f"{prefix}{cred_value}"
+    elif auth_type == "header":
+        req_headers[tool.get("auth_header", "X-API-Key")] = cred_value
+    elif auth_type == "basic":
+        import base64
+        encoded = base64.b64encode(cred_value.encode()).decode()
+        req_headers["Authorization"] = f"Basic {encoded}"
+    elif auth_type == "query":
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}key={cred_value}"
+    elif auth_type == "body":
+        # Auth goes in POST body (e.g. UptimeRobot)
+        pass
+
+    # Merge extra headers
+    if headers:
+        try:
+            extra = json.loads(headers)
+            req_headers.update(extra)
+        except json.JSONDecodeError:
+            pass
+
+    # Build body
+    json_body = None
+    if body:
+        try:
+            json_body = json.loads(body)
+        except json.JSONDecodeError:
+            json_body = None
+
+    # For body-auth APIs, inject key into body
+    if auth_type == "body" and json_body is None:
+        json_body = {}
+    if auth_type == "body" and isinstance(json_body, dict):
+        json_body["api_key"] = cred_value
+
+    # Make the request
+    try:
+        resp = requests.request(
+            method=method.upper(),
+            url=url,
+            json=json_body if json_body else None,
+            data=body if (body and not json_body and method.upper() in ("POST", "PUT", "PATCH")) else None,
+            headers=req_headers,
+            timeout=30,
+        )
+
+        # Parse response
+        try:
+            resp_data = resp.json()
+        except Exception:
+            resp_data = resp.text[:3000]
+
+        result = {
+            "status": resp.status_code,
+            "ok": 200 <= resp.status_code < 300,
+            "api": api,
+            "method": method.upper(),
+            "path": path,
+        }
+
+        if isinstance(resp_data, dict):
+            # Truncate large responses
+            resp_str = json.dumps(resp_data)
+            if len(resp_str) > 4000:
+                result["data"] = json.dumps(resp_data, indent=2)[:3500] + "\n... [truncated]"
+            else:
+                result["data"] = resp_data
+        elif isinstance(resp_data, str):
+            result["data"] = resp_data[:3000]
+        else:
+            result["data"] = resp_data
+
+        return result
+    except requests.Timeout:
+        return {"error": f"Request to {api} timed out (30s)", "url": url}
+    except Exception as e:
+        return {"error": str(e), "url": url}
+
+
+def list_apis() -> dict:
+    """List all registered dynamic APIs and their capabilities."""
+    from memory import list_dynamic_tools
+    tools = list_dynamic_tools()
+    if not tools:
+        return {"apis": [], "count": 0, "note": "No APIs registered. Use register_api or give me a credential."}
+    return {"apis": tools, "count": len(tools)}
+
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 TOOL_REGISTRY = {
@@ -1297,6 +1510,39 @@ TOOL_REGISTRY = {
         "fn": redis_set,
         "description": "Set a value in Redis. Optionally set TTL in seconds (0 = no expiry).",
         "params": {"key": "str", "value": "str", "ttl": "int (optional, default 0 = no expiry)", "host": "str (optional)", "port": "int (optional)"},
+    },
+    # ── Dynamic API tools ─────────────────────────────────────────────────
+    "register_api": {
+        "fn": register_api,
+        "description": "Register an external API for future calling. Provide name + base_url + auth_cred (credential name). For known APIs (stripe, vercel, cloudflare, github_api, notion, etc.), just provide name and credential — endpoints are auto-detected.",
+        "params": {
+            "name": "str (API name, e.g. 'stripe', 'vercel', 'my_custom_api')",
+            "base_url": "str (API base URL, or 'auto' for known APIs)",
+            "auth_cred": "str (credential name stored via store_cred)",
+            "auth_type": "str (optional: bearer, header, query, basic, body)",
+            "auth_header": "str (optional, default 'Authorization')",
+            "auth_prefix": "str (optional, default 'Bearer ')",
+            "endpoints": "str (optional, JSON array of {method, path, desc})",
+            "description": "str (optional)",
+            "docs_url": "str (optional)",
+        },
+    },
+    "api_call": {
+        "fn": api_call,
+        "description": "Call a registered external API. Use after register_api. Handles auth automatically.",
+        "params": {
+            "api": "str (registered API name, e.g. 'stripe')",
+            "method": "str (GET, POST, PUT, DELETE, PATCH)",
+            "path": "str (endpoint path, e.g. '/charges', '/v9/projects')",
+            "body": "str (optional, JSON body for POST/PUT)",
+            "query_params": "str (optional, e.g. 'limit=10&status=active')",
+            "headers": "str (optional, extra headers as JSON object)",
+        },
+    },
+    "list_apis": {
+        "fn": list_apis,
+        "description": "List all registered dynamic APIs and their endpoints. Shows what external services the agent can call.",
+        "params": {},
     },
 }
 

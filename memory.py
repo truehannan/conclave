@@ -97,6 +97,25 @@ def init_db():
     if "last_error" not in existing_cols:
         c.execute("ALTER TABLE task_state ADD COLUMN last_error TEXT")
 
+    # Dynamic API tools table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS dynamic_tools (
+            id          INTEGER PRIMARY KEY,
+            name        TEXT UNIQUE NOT NULL,
+            base_url    TEXT NOT NULL,
+            auth_type   TEXT NOT NULL DEFAULT 'bearer',
+            auth_header TEXT DEFAULT 'Authorization',
+            auth_prefix TEXT DEFAULT 'Bearer ',
+            auth_cred   TEXT NOT NULL,
+            endpoints   TEXT NOT NULL DEFAULT '[]',
+            description TEXT DEFAULT '',
+            docs_url    TEXT DEFAULT '',
+            enabled     INTEGER DEFAULT 1,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -537,3 +556,106 @@ def get_full_context_md(chat_id: int) -> str:
         sections.append(f"## Recent Sessions\n{sessions}")
 
     return "\n\n".join(sections)
+
+
+
+# ── Dynamic API tools ────────────────────────────────────────────────────────
+
+def register_dynamic_tool(
+    name: str,
+    base_url: str,
+    auth_cred: str,
+    auth_type: str = "bearer",
+    auth_header: str = "Authorization",
+    auth_prefix: str = "Bearer ",
+    endpoints: list | None = None,
+    description: str = "",
+    docs_url: str = "",
+) -> bool:
+    """Register or update a dynamic API tool."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """INSERT OR REPLACE INTO dynamic_tools
+           (name, base_url, auth_type, auth_header, auth_prefix, auth_cred, endpoints, description, docs_url, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+        (
+            name.lower().strip(),
+            base_url.rstrip("/"),
+            auth_type,
+            auth_header,
+            auth_prefix,
+            auth_cred,
+            json.dumps(endpoints or []),
+            description,
+            docs_url,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_dynamic_tool(name: str) -> dict | None:
+    """Get a single dynamic tool by name."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT name, base_url, auth_type, auth_header, auth_prefix, auth_cred, endpoints, description, docs_url, enabled "
+        "FROM dynamic_tools WHERE name = ?",
+        (name.lower().strip(),),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "name": row[0],
+        "base_url": row[1],
+        "auth_type": row[2],
+        "auth_header": row[3],
+        "auth_prefix": row[4],
+        "auth_cred": row[5],
+        "endpoints": json.loads(row[6]) if row[6] else [],
+        "description": row[7],
+        "docs_url": row[8],
+        "enabled": bool(row[9]),
+    }
+
+
+def list_dynamic_tools() -> list[dict]:
+    """List all registered dynamic tools."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT name, base_url, auth_cred, description, enabled FROM dynamic_tools ORDER BY name"
+    )
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {"name": r[0], "base_url": r[1], "auth_cred": r[2], "description": r[3], "enabled": bool(r[4])}
+        for r in rows
+    ]
+
+
+def update_dynamic_tool_endpoints(name: str, endpoints: list):
+    """Update the endpoints list for a dynamic tool."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "UPDATE dynamic_tools SET endpoints = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+        (json.dumps(endpoints), name.lower().strip()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_dynamic_tool(name: str) -> bool:
+    """Delete a dynamic tool."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM dynamic_tools WHERE name = ?", (name.lower().strip(),))
+    deleted = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted

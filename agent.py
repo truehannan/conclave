@@ -878,6 +878,16 @@ def _build_context(chat_id: int, force_refresh: bool = False) -> list[dict]:
         facts_text = "\n".join(f"- {f['fact']}" for f in long_term_facts)
         extra_context.append(f"\n== DURABLE FACTS ==\n{facts_text}")
 
+    # Inject registered dynamic APIs so the agent knows what external services it can call
+    dynamic_apis = mem.list_dynamic_tools()
+    if dynamic_apis:
+        api_lines = []
+        for api in dynamic_apis:
+            if api.get("enabled"):
+                api_lines.append(f"• {api['name']} — {api.get('description', api['base_url'])} (use: api_call(api=\"{api['name']}\", ...))")
+        if api_lines:
+            extra_context.append(f"\n== REGISTERED APIs (call via api_call tool) ==\n" + "\n".join(api_lines))
+
     system = SYSTEM_PROMPT.format(tools=get_tools_description())
     if extra_context:
         system += "\n" + "\n".join(extra_context)
@@ -1358,6 +1368,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/task — Live task status\n"
         "/stop — Stop a running task\n"
         "/skills — List/install/remove skills \\(send \\.zip to install\\)\n"
+        "/apis — List/add/remove registered external APIs\n"
         "/ping — Check if alive\n"
         "/update — Pull latest code and restart service\n\n"
         "*Media:* Send me photos, voice, audio, video, or files\\. "
@@ -1766,9 +1777,28 @@ async def cmd_storekey(update: Update, context: ContextTypes.DEFAULT_TYPE):
         value = rest.strip()
         description = ""
     mem.store_credential(name, value, description)
+
+    # Auto-detect and register known APIs
+    from known_apis import detect_api_from_key
+    detected = detect_api_from_key(value, f"{name} {description}")
+    api_msg = ""
+    if detected and not mem.get_dynamic_tool(detected["name"]):
+        mem.register_dynamic_tool(
+            name=detected["name"],
+            base_url=detected["base_url"],
+            auth_cred=name,
+            auth_type=detected.get("auth_type", "bearer"),
+            auth_header=detected.get("auth_header", "Authorization"),
+            auth_prefix=detected.get("auth_prefix", "Bearer "),
+            endpoints=detected.get("endpoints", []),
+            description=detected.get("description", ""),
+            docs_url=detected.get("docs_url", ""),
+        )
+        api_msg = f"\n\n🔌 Auto-registered API: *{detected['name']}*\n{detected.get('description', '')}\nI can now call this API directly."
+
     await update.message.reply_text(
         f"✅ Stored `{name}`" + (f" — _{description}_" if description else "") + "\n"
-        "_(Value never sent to AI — stored directly on server)_",
+        "_(Value never sent to AI — stored directly on server)_" + api_msg,
         parse_mode="Markdown",
     )
 
@@ -2130,6 +2160,101 @@ def _get_relevant_skills(user_message: str) -> str:
     return "\n\n".join(relevant[:2])
 
 
+async def cmd_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /apis command — list, remove, or show details of registered APIs."""
+    if not is_owner(update.effective_user.id):
+        return
+
+    args = context.args
+
+    # /apis — list all
+    if not args:
+        apis = mem.list_dynamic_tools()
+        if not apis:
+            await update.message.reply_text(
+                "🔌 No APIs registered.\n\n"
+                "Give me a credential and I'll auto-detect and register the API.\n"
+                "Or use: /apis add <name> (for known services like stripe, vercel, cloudflare)"
+            )
+            return
+        lines = ["🔌 Registered APIs:\n"]
+        for api in apis:
+            status = "✅" if api.get("enabled") else "⏸️"
+            lines.append(f"{status} {api['name']} — {api.get('description', api['base_url'])}")
+        lines.append(f"\nTotal: {len(apis)}")
+        lines.append("Use: /apis info <name> | /apis remove <name>")
+        await update.message.reply_text("\n".join(lines))
+        return
+
+    # /apis info <name>
+    if args[0] == "info" and len(args) > 1:
+        tool = mem.get_dynamic_tool(args[1])
+        if not tool:
+            await update.message.reply_text(f"❌ API not found: {args[1]}")
+            return
+        endpoints = tool.get("endpoints", [])
+        ep_text = "\n".join(f"  {e['method']} {e['path']} — {e.get('desc', '')}" for e in endpoints[:10])
+        text = (
+            f"🔌 {tool['name']}\n\n"
+            f"Base URL: {tool['base_url']}\n"
+            f"Auth: {tool['auth_type']} via {tool['auth_cred']}\n"
+            f"Docs: {tool.get('docs_url', 'N/A')}\n"
+            f"Status: {'enabled' if tool['enabled'] else 'disabled'}\n\n"
+            f"Endpoints ({len(endpoints)}):\n{ep_text or '  (none registered)'}"
+        )
+        await update.message.reply_text(text)
+        return
+
+    # /apis remove <name>
+    if args[0] == "remove" and len(args) > 1:
+        if mem.remove_dynamic_tool(args[1]):
+            await update.message.reply_text(f"✅ Removed API: {args[1]}")
+        else:
+            await update.message.reply_text(f"❌ API not found: {args[1]}")
+        return
+
+    # /apis add <name> — register a known API (credential must already be stored)
+    if args[0] == "add" and len(args) > 1:
+        from known_apis import KNOWN_APIS
+        name = args[1].lower().strip()
+        if name in KNOWN_APIS:
+            api_def = KNOWN_APIS[name]
+            cred_name = f"{name.upper()}_API_KEY"
+            mem.register_dynamic_tool(
+                name=api_def["name"],
+                base_url=api_def["base_url"],
+                auth_cred=cred_name,
+                auth_type=api_def.get("auth_type", "bearer"),
+                auth_header=api_def.get("auth_header", "Authorization"),
+                auth_prefix=api_def.get("auth_prefix", "Bearer "),
+                endpoints=api_def.get("endpoints", []),
+                description=api_def.get("description", ""),
+                docs_url=api_def.get("docs_url", ""),
+            )
+            await update.message.reply_text(
+                f"✅ Registered: {name}\n"
+                f"Base: {api_def['base_url']}\n"
+                f"Credential needed: {cred_name}\n\n"
+                f"Store the key with:\n/storekey {cred_name} <your-api-key>"
+            )
+        else:
+            known_names = ", ".join(sorted(KNOWN_APIS.keys()))
+            await update.message.reply_text(
+                f"❌ Unknown API: {name}\n\n"
+                f"Known APIs: {known_names}\n\n"
+                "For custom APIs, just give me the credential and I'll figure it out."
+            )
+        return
+
+    await update.message.reply_text(
+        "Usage:\n"
+        "/apis — list registered APIs\n"
+        "/apis info <name> — show API details\n"
+        "/apis add <name> — register a known API\n"
+        "/apis remove <name> — unregister an API"
+    )
+
+
 async def cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /skills command — list, install (from zip), or remove skills."""
     if not is_owner(update.effective_user.id):
@@ -2455,6 +2580,7 @@ def main():
     app.add_handler(CommandHandler("plan",    cmd_plan))
     app.add_handler(CommandHandler("agent",   cmd_agent))
     app.add_handler(CommandHandler("skills",  cmd_skills))
+    app.add_handler(CommandHandler("apis",    cmd_apis))
     app.add_handler(CommandHandler("usage",   cmd_usage))
     app.add_handler(CallbackQueryHandler(handle_continue_button, pattern=r"^cont_"))
     app.add_handler(CallbackQueryHandler(handle_providerkey_button, pattern=r"^pkey_"))
