@@ -755,6 +755,51 @@ def run_python(code: str, timeout: int = 30) -> dict:
         return {"error": str(e)}
 
 
+def exec_code(code: str, lang: str = "node", timeout: int = 30) -> dict:
+    """Execute code directly in memory — no files written to disk.
+    lang: 'node' (JavaScript/TypeScript), 'python', or 'bash'.
+    This is the PREFERRED way to run quick computations, data processing,
+    API calls, JSON parsing, or any logic that doesn't need persistence.
+    Use this instead of write_file + run_command for one-off code execution."""
+    try:
+        if lang in ("node", "js", "javascript"):
+            r = subprocess.run(
+                ["node", "-e", code],
+                capture_output=True, text=True, timeout=timeout,
+                cwd=str(WORKSPACE_DIR),
+            )
+        elif lang in ("python", "py"):
+            # Use venv python if available, else system python
+            py_bin = str(WORKSPACE_DIR.parent / "venv" / "bin" / "python")
+            if not Path(py_bin).exists():
+                py_bin = "python3"
+            r = subprocess.run(
+                [py_bin, "-c", code],
+                capture_output=True, text=True, timeout=timeout,
+                cwd=str(WORKSPACE_DIR),
+            )
+        elif lang in ("bash", "sh"):
+            r = subprocess.run(
+                ["bash", "-c", code],
+                capture_output=True, text=True, timeout=timeout,
+                cwd=str(WORKSPACE_DIR),
+            )
+        else:
+            return {"error": f"Unsupported language: {lang}. Use: node, python, or bash."}
+
+        return {
+            "stdout": r.stdout[:4000] if r.stdout else "",
+            "stderr": r.stderr[:2000] if r.stderr else "",
+            "returncode": r.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": f"Code timed out after {timeout}s"}
+    except FileNotFoundError as e:
+        return {"error": f"Runtime not found: {e}. Install node/python first."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def read_csv(path: str, max_rows: int = 100) -> dict:
     """Read a CSV file and return its contents as a list of dicts."""
     try:
@@ -1425,6 +1470,11 @@ TOOL_REGISTRY = {
         "fn": run_python,
         "description": "Execute a Python code snippet in a subprocess. Returns stdout, stderr, returncode.",
         "params": {"code": "str (Python code to run)", "timeout": "int (optional, default 30s)"},
+    },
+    "exec_code": {
+        "fn": exec_code,
+        "description": "Execute code IN MEMORY (no files). PREFERRED for: calculations, data processing, API calls, JSON parsing, quick logic. Supports: node (JS), python, bash.",
+        "params": {"code": "str (code to execute)", "lang": "str (node|python|bash, default: node)", "timeout": "int (optional, default 30s)"},
     },
     "read_csv": {
         "fn": read_csv,

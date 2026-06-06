@@ -58,6 +58,7 @@ PROVIDER_META = {
     "GitHub": {"slug": "gh", "emoji": "🐙"},
     "NVIDIA": {"slug": "nv", "emoji": "🟩"},
     "HuggingFace": {"slug": "hf", "emoji": "🤗"},
+    "Google": {"slug": "gg", "emoji": "🔵"},
 }
 OPENAI_DIRECT_API_BASE = "https://api.openai.com/v1"
 DO_MODELS_CACHE: dict[str, object] = {"ts": 0.0, "models": set()}
@@ -72,6 +73,8 @@ def _provider_from_model(model: str) -> str:
         return "NVIDIA"
     if model.startswith("hf:"):
         return "HuggingFace"
+    if model.startswith("google:"):
+        return "Google"
     if model.startswith("anthropic-"):
         return "Anthropic"
     if model.startswith("openai-"):
@@ -92,6 +95,8 @@ def _provider_key_name(provider: str) -> str:
         return "NVIDIA_API_KEY"
     if provider == "HuggingFace":
         return "HUGGINGFACE_API_KEY"
+    if provider == "Google":
+        return "GOOGLE_AI_API_KEY"
     return "OPENAI_API_KEY"
 
 
@@ -106,6 +111,8 @@ def _provider_base_url(provider: str) -> str:
         return cfg.NVIDIA_API_BASE
     if provider == "HuggingFace":
         return cfg.HUGGINGFACE_API_BASE
+    if provider == "Google":
+        return cfg.GOOGLE_AI_API_BASE
     return cfg.OPENAI_API_BASE
 
 
@@ -178,6 +185,8 @@ def _resolve_client_and_model(selected_model: str) -> tuple[OpenAI, str, str]:
         api_model = selected_model.split(":", 1)[1]
     elif provider == "HuggingFace":
         api_model = selected_model.split(":", 1)[1]
+    elif provider == "Google":
+        api_model = selected_model.split(":", 1)[1]
     elif provider == "OpenAI" and not force_gradient:
         api_model = selected_model.replace("openai-", "", 1)
     else:
@@ -226,41 +235,40 @@ async def _llm_call(**kwargs):
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You are a personal AI assistant with full server access. You belong to one owner via Telegram.
+You are a personal AI assistant with full server access. One owner, via Telegram.
 
-== #1 RULE: DO MAXIMUM WORK PER RESPONSE ==
-Put as many <tool_call> blocks as needed in ONE response. They all execute in parallel.
-- Install 3 things? ONE run_command with `apt install a b c && pip install x y z`
-- Need 4 files? FOUR <tool_call> read_file blocks in ONE response.
-- Create script + make executable + start service? ALL in one response.
-- NEVER send one tool call then wait. Batch everything you can.
+== #1 RULE: BATCH & EXEC IN MEMORY ==
+- Multiple <tool_call> blocks in ONE response = parallel execution. ALWAYS batch.
+- For computations, data processing, API calls, JSON parsing: use exec_code(lang="node") — runs in memory, no files.
+- For system tasks (install, service, file management): use run_command.
+- NEVER write a file just to run it. exec_code runs code directly.
+- Install 3 things? ONE command: `apt install a b c && pip install x y z`
 
 == TOOL FORMAT ==
 <tool_call>
 {{"name": "tool_name", "arguments": {{"key": "value"}}}}
 </tool_call>
 
-== SEARCHING & VERIFICATION ==
-- If you don't know something current (versions, docs, how-to), use google_search or web_search FIRST. Don't guess.
-- Before installing: verify package exists. Before editing: read the file first.
-- returncode != 0 = FAILED. Read stderr, fix it, retry. Never skip failures.
+== EXEC_CODE EXAMPLES ==
+Quick fetch: exec_code(code="const r=await fetch('https://api.example.com/data');console.log(await r.json())", lang="node")
+Math: exec_code(code="console.log(Math.PI * 5**2)", lang="node")
+Parse JSON: exec_code(code="const d=JSON.parse('{...}'); console.log(d.key)", lang="node")
+Python calc: exec_code(code="import json; print(json.dumps({'result': 42}))", lang="python")
 
-== LEARNING FROM OWNER ==
-When the owner gives you a preference, instruction, or correction:
-- Use remember() to store it permanently. Key format: "instruction:<topic>"
-- Examples: "instruction:coding_style", "instruction:deploy_process", "instruction:preferred_tools"
-- Always check recall() at start of complex tasks to follow stored instructions.
+== WHEN TO SEARCH ==
+If you're unsure about ANY fact, version, or method: google_search FIRST. Don't guess.
+
+== LEARNING ==
+Owner gives instruction/correction → remember(key="instruction:<topic>", value="...") immediately.
+
+== REGISTERED APIS ==
+When credentials are stored, APIs are auto-registered. Call them via api_call(api="name", method="GET", path="/endpoint").
 
 == BEHAVIOR ==
-- Smart, direct, concise. No narration. No step lists. Just act.
-- Questions/opinions → plain text reply, no tools.
-- Tasks → tool calls immediately. One status line max ("Installing...").
-- Final reply: outcome only ("Done — running on port 3000.").
-- Never delegate to user. Never say "you need to" or "run this command".
-- Never use Markdown in replies. Clean plain text only.
-- Credentials shared → store_cred immediately.
-- Facts shared → remember immediately.
-- Timed tasks → set_reminder (messages owner via Telegram at scheduled time).
+- Concise. No narration. No step lists. Just act.
+- Tasks → tool calls immediately. Final reply: outcome only.
+- Never delegate to user. You handle everything.
+- Credentials → store_cred. Facts → remember. Timed tasks → set_reminder.
 
 == AVAILABLE TOOLS ==
 {tools}
@@ -686,6 +694,8 @@ def _providerkey_name(provider: str) -> str | None:
         return "NVIDIA_API_KEY"
     if p in ("huggingface", "hf"):
         return "HUGGINGFACE_API_KEY"
+    if p in ("google", "gg", "gemini"):
+        return "GOOGLE_AI_API_KEY"
     return None
 
 
@@ -730,6 +740,11 @@ def _validate_provider_key(provider: str, key: str) -> tuple[bool, str]:
     if p in ("huggingface", "hf"):
         if not k.startswith("hf_"):
             return False, "HuggingFace key should start with `hf_`"
+        return True, ""
+
+    if p in ("google", "gg", "gemini"):
+        if not k.startswith("AIza"):
+            return False, "Google AI key should start with `AIza`"
         return True, ""
 
     return False, "Unknown provider."
@@ -2294,27 +2309,57 @@ async def cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Skill not found: {name}")
         return
 
-    # /skills install <url> [url2] [url3] — bulk install
+    # /skills install <url> [url2] [url3] — bulk install from URLs or search by name
     if args[0] == "install" and len(args) > 1:
         import zipfile
         import io
-        urls = args[1:]
+        targets = args[1:]
         installed = 0
         errors = []
-        for url in urls:
+        for target in targets:
             try:
-                if not url.endswith(".zip"):
-                    errors.append(f"{url}: not a .zip file")
-                    continue
-                resp = __import__("requests").get(url, timeout=30)
-                resp.raise_for_status()
-                with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-                    zf.extractall(SKILLS_DIR)
-                installed += 1
+                # If it's a URL ending in .zip, download directly
+                if target.startswith("http") and target.endswith(".zip"):
+                    resp = __import__("requests").get(target, timeout=30)
+                    resp.raise_for_status()
+                    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                        zf.extractall(SKILLS_DIR)
+                    installed += 1
+                elif target.startswith("http"):
+                    # URL but not .zip — try anyway (might be a redirect)
+                    resp = __import__("requests").get(target, timeout=30)
+                    resp.raise_for_status()
+                    try:
+                        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                            zf.extractall(SKILLS_DIR)
+                        installed += 1
+                    except zipfile.BadZipFile:
+                        errors.append(f"{target}: not a valid zip file")
+                else:
+                    # It's a word/name — search GitHub for a skill with that name
+                    search_url = f"https://api.github.com/search/repositories?q={target}+skill+in:name&sort=stars&per_page=3"
+                    resp = __import__("requests").get(search_url, timeout=15)
+                    if resp.status_code == 200:
+                        items = resp.json().get("items", [])
+                        if items:
+                            # Try to download the first result's default branch as zip
+                            repo = items[0]
+                            zip_url = f"https://github.com/{repo['full_name']}/archive/refs/heads/{repo.get('default_branch', 'main')}.zip"
+                            zip_resp = __import__("requests").get(zip_url, timeout=30)
+                            if zip_resp.status_code == 200:
+                                with zipfile.ZipFile(io.BytesIO(zip_resp.content)) as zf:
+                                    zf.extractall(SKILLS_DIR)
+                                installed += 1
+                            else:
+                                errors.append(f"{target}: could not download from {repo['full_name']}")
+                        else:
+                            errors.append(f"{target}: no matching skill found on GitHub")
+                    else:
+                        errors.append(f"{target}: GitHub search failed")
             except Exception as e:
-                errors.append(f"{url}: {e}")
+                errors.append(f"{target}: {e}")
         new_skills = _list_skills()
-        reply_lines = [f"✅ Installed {installed}/{len(urls)} skill(s). Total: {len(new_skills)}"]
+        reply_lines = [f"✅ Installed {installed}/{len(targets)} skill(s). Total: {len(new_skills)}"]
         if errors:
             reply_lines.append("\nErrors:")
             for err in errors:
@@ -2322,7 +2367,7 @@ async def cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(reply_lines))
         return
 
-    await update.message.reply_text("Usage: /skills | /skills remove <name> | /skills install <url> [url2...]\nOr send .zip file(s) to install. Only .zip files accepted.")
+    await update.message.reply_text("Usage: /skills | /skills install <name-or-url> [...] | /skills remove <name>\nExamples:\n  /skills install coding-agent\n  /skills install https://example.com/skill.zip\n  /skills install coding-agent devops-helper\nOr send .zip file(s) directly.")
 
 
 # ── Media helpers ─────────────────────────────────────────────────────────────

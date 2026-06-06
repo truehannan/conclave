@@ -46,6 +46,7 @@ OPENROUTER_API_BASE = _clean_env("OPENROUTER_API_BASE", "https://openrouter.ai/a
 GITHUB_MODELS_API_BASE = _clean_env("GITHUB_MODELS_API_BASE", "https://models.inference.ai.azure.com")
 NVIDIA_API_BASE = _clean_env("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
 HUGGINGFACE_API_BASE = _clean_env("HUGGINGFACE_API_BASE", "https://router.huggingface.co/v1")
+GOOGLE_AI_API_BASE = _clean_env("GOOGLE_AI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai")
 GOOGLE_SEARCH_API_KEY = _clean_env("GOOGLE_SEARCH_API_KEY")
 GOOGLE_SEARCH_CX = _clean_env("GOOGLE_SEARCH_CX")
 
@@ -138,6 +139,14 @@ MODEL_CATALOG = {
         "hf:google/gemma-3-27b-it",
         "hf:microsoft/phi-4",
         "hf:NousResearch/Hermes-3-Llama-3.1-8B",
+    ],
+    "Google": [
+        "google:gemini-2.5-flash",
+        "google:gemini-2.5-pro",
+        "google:gemini-2.0-flash",
+        "google:gemini-2.0-flash-lite",
+        "google:gemini-1.5-pro",
+        "google:gemini-1.5-flash",
     ],
 }
 
