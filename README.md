@@ -108,7 +108,6 @@ After `npm link`, all commands start with `synthclaw`:
 |---------|-------------|
 | `synthclaw run <cmd>` | Execute a shell command on the agent server |
 | `synthclaw plan <task>` | Break a task into steps (no execution) |
-| `synthclaw agent <task>` | Autonomous mode — executes without asking |
 
 ### Memory & Credentials
 
@@ -343,3 +342,5 @@ Just keep it simple — SynthClaw's entire point is being small and readable.
 | `/skills` | List, install (`.zip` or URL), or remove skills |
 - 🧩 **Skills System** — Drop in `.zip` skill packs (each with a `SKILL.md`) to extend the agent's behaviour; install via `/skills install <url>` or by sending a `.zip` directly in chat
 - 📊 **Live Progress Messages** — Long-running tool chains edit a single "Working…" message in place so you always see real-time step updates
+| `synthclaw agent` | Launch interactive dashboard (CPU/mem/disk gauges + chat) |
+| `synthclaw agent <task>` | Autonomous mode — executes the given task without asking |
