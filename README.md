@@ -11,7 +11,7 @@
 | $$  \__/ /$$   /$$ /$$$$$$$  /$$$$$$  | $$$$$$$   /$$$$$$$| $$  /$$$$$$  /$$  /$$  /$$      | $$  \__/  /$$$$$$   /$$$$$$   /$$$$$$   /$$$$$$  /$$$$$$$  /$$$$$$  
 |  $$$$$$ | $$  | $$| $$__  $$|_  $$_/  | $$__  $$ /$$_____/| $$ |____  $$| $$ | $$ | $$      | $$       /$$__  $$ |____  $$ /$$__  $$ /$$__  $$| $$__  $$|_  $$_/  
  \____  $$| $$  | $$| $$  \ $$  | $$    | $$  \ $$| $$      | $$  /$$$$$$$| $$ | $$ | $$      | $$      | $$  \ $$  /$$$$$$$| $$  \ $$| $$$$$$$$| $$  \ $$  | $$    
- /$$  \ $$| $$  | $$| $$  | $$  | $$ /$$| $$  | $$| $$      | $$ /$$__  $$| $$ | $$ | $$      | $$    $$| $$  | $$ /$$__  $$| $$  | $$| $$_____/| $$  | $$  | $$ /$$
+ /$$  \ $$| $$  | $$| $$  | $$  | $$ /$$| $$  | $$| $$      | $$ /$$__  $$| $$ | $$ | $$      | $$    $$| $$  | $$ /$$__  $$ | $$  | $$| $$_____/| $$  | $$  | $$ /$$
 |  $$$$$$/|  $$$$$$$| $$  | $$  |  $$$$/| $$  | $$|  $$$$$$$| $$|  $$$$$$$|  $$$$$/$$$$/      |  $$$$$$/|  $$$$$$/|  $$$$$$$|  $$$$$$$|  $$$$$$$| $$  | $$  |  $$$$/
  \______/  \____  $$|__/  |__/   \___/  |__/  |__/ \_______/|__/ \_______/ \_____/\___/        \______/  \______/  \_______/ \____  $$ \_______/|__/  |__/   \___/  
            /$$  | $$                                                                                                         /$$  \ $$                              
@@ -56,12 +56,15 @@ synthclaw setup
 ```
 
 The wizard interactively asks for everything:
+- Storage mode (local SQLite or Cloudflare D1 + R2)
 - Interface mode (Telegram / WhatsApp / Both)
 - Telegram bot token
 - WhatsApp API credentials (if applicable)
 - LLM provider API key & base URL
 - Default model selection
 - Server settings (remote host, base directory)
+
+If you've already run setup before, existing values are shown as defaults — press Enter to keep them.
 
 No more manually editing `.env` files. One command handles it all.
 
@@ -157,6 +160,9 @@ When chatting with your bot on Telegram, these slash commands are available:
 | `/plan <task>` | Break a task into steps (no execution) |
 | `/agent <task>` | Autonomous mode — executes without asking |
 | `/ping` | Check if the agent is alive |
+| `/connectors [connect <app>\|search <query>]` | List connected Composio apps, connect a new app via OAuth, or search available tools |
+| `/mcp [add <json>\|remove <name>]` | List, add, or remove MCP server configurations |
+| `/skills` | List, install (`.zip` or URL), or remove skills |
 
 **Or just chat normally:**
 > "What's the best way to set up a cron job?"
@@ -170,7 +176,7 @@ When chatting with your bot on Telegram, these slash commands are available:
 ## ✨ Features
 
 - 💬 **Conversational AI** — Not just a task executor. It chats, explains, has opinions, and knows when to use tools vs just talk.
-- 🛠️ **12 Built-in Tools** — Shell commands, file I/O, HTTP requests, systemd services, encrypted credential storage, persistent memory
+- 🛠️ **13 Built-in Tools** — Shell commands, file I/O, HTTP requests, systemd services, encrypted credential storage, persistent memory, Composio app actions
 - 📲 **Telegram + WhatsApp** — Full bot interfaces for both platforms
 - 🖥️ **Full CLI** — Every bot command is also a `synthclaw` CLI command
 - 🔌 **Any LLM Backend** — Works with any OpenAI-compatible API (DigitalOcean Gradient AI, OpenAI, Ollama, vLLM, etc.)
@@ -181,6 +187,12 @@ When chatting with your bot on Telegram, these slash commands are available:
 - 🤖 **Agent Mode** — Executes tasks autonomously, chaining tools without confirmation
 - 🔒 **Owner Lock** — First user to `/start` becomes the owner; everyone else is blocked
 - ⚙️ **One-Command Setup** — `synthclaw setup` wizard generates everything
+- 🧩 **Skills System** — Drop in `.zip` skill packs (each with a `SKILL.md`) to extend the agent's behaviour; install via `/skills install <url>` or by sending a `.zip` directly in chat
+- 📊 **Live Progress Messages** — Long-running tool chains edit a single "Working…" message in place so you always see real-time step updates
+- 🔗 **Composio Integration** — Connect 1000+ apps (Gmail, Slack, GitHub, Notion, and more) via `/connectors`
+- 🔌 **MCP Support** — Add Model Context Protocol servers via `/mcp add <json>`
+- ☁️ **Cloudflare Storage** — Optionally store agent data in Cloudflare D1 + R2 instead of local SQLite
+- ⏱️ **Rate Limiting** — Optional `MAX_RPM` cap to stay within LLM provider limits
 
 ---
 
@@ -203,7 +215,7 @@ When chatting with your bot on Telegram, these slash commands are available:
         │           │           │
     ┌───▼───┐ ┌────▼────┐ ┌────▼────┐
     │ Tools │ │ Memory  │ │ Config  │
-    │12 fns │ │ SQLite  │ │  .env   │
+    │13 fns │ │ SQLite  │ │  .env   │
     │       │ │+Fernet  │ │         │
     └───────┘ └─────────┘ └─────────┘
 ```
@@ -215,7 +227,7 @@ When chatting with your bot on Telegram, these slash commands are available:
 | `main.py` | Entry point — launches Telegram, WhatsApp, or both | ~40 |
 | `agent.py` | Telegram bot + LLM agent loop | ~300 |
 | `whatsapp_bot.py` | WhatsApp webhook server (Flask) | ~280 |
-| `tools.py` | 12 tool implementations | ~230 |
+| `tools.py` | 13 tool implementations | ~230 |
 | `memory.py` | SQLite + Fernet encryption layer | ~170 |
 | `config.py` | Environment-based configuration | ~45 |
 | `cli/` | Node.js CLI package (`synthclaw` commands) | ~600 |
@@ -286,6 +298,11 @@ These are configured automatically by `synthclaw setup`. You can also edit `.env
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `INTERFACE_MODE` | No | `telegram` | `telegram`, `whatsapp`, or `both` |
+| `STORAGE_MODE` | No | `local` | `local` (SQLite) or `cloudflare` (D1 + R2) |
+| `CF_ACCOUNT_ID` | If `STORAGE_MODE=cloudflare` | — | Cloudflare Account ID |
+| `CF_D1_DATABASE_ID` | If `STORAGE_MODE=cloudflare` | — | Cloudflare D1 database ID |
+| `CF_API_TOKEN` | If `STORAGE_MODE=cloudflare` | — | Cloudflare API token (D1 + R2 permissions) |
+| `CF_R2_BUCKET` | No | — | Cloudflare R2 bucket name (optional file storage) |
 | `TELEGRAM_TOKEN` | If using Telegram | — | Bot token from @BotFather |
 | `WHATSAPP_TOKEN` | If using WhatsApp | — | Meta Cloud API access token |
 | `WHATSAPP_PHONE_NUMBER_ID` | If using WhatsApp | — | Your WhatsApp phone number ID |
@@ -297,12 +314,14 @@ These are configured automatically by `synthclaw setup`. You can also edit `.env
 | `SYNTHCLAW_BASE_DIR` | No | `/opt/agent` | Installation directory |
 | `MAX_TOOL_ITERATIONS` | No | `10` | Max tool calls per message |
 | `MAX_HISTORY_MESSAGES` | No | `20` | Conversation history length |
+| `MAX_RPM` | No | `0` (unlimited) | Max LLM requests per minute (0 = unlimited) |
+| `COMPOSIO_API_KEY` | No | — | Composio API key for 1000+ app integrations |
 
 ---
 
 ## 🔧 Built-in Tools
 
-The agent has 12 tools it can use autonomously:
+The agent has 13 tools it can use autonomously:
 
 | Tool | What it does |
 |------|-------------|
@@ -318,6 +337,55 @@ The agent has 12 tools it can use autonomously:
 | `get_cred` | Retrieve a stored credential |
 | `remember` | Save a persistent fact |
 | `recall` | Retrieve saved facts |
+| `composio_execute` | Execute any Composio tool action (Gmail, Slack, GitHub, Notion, and 1000+ more) |
+
+---
+
+## 🔗 Composio Integration
+
+[Composio](https://app.composio.dev) gives the agent access to 1000+ app integrations. Once configured, the agent can send emails, create GitHub issues, post Slack messages, update Notion pages, and much more — all from natural chat.
+
+**Setup:**
+
+1. Get your API key at [app.composio.dev](https://app.composio.dev)
+2. Add it during `synthclaw setup`, or store it directly:
+   ```
+   /storekey COMPOSIO_API_KEY <your-key>
+   ```
+3. Connect apps via Telegram:
+   ```
+   /connectors connect github
+   /connectors connect gmail
+   ```
+4. The agent can now use those apps autonomously via the `composio_execute` tool.
+
+**Telegram commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/connectors` | List all connected apps |
+| `/connectors connect <app>` | Connect a new app via OAuth |
+| `/connectors search <query>` | Search available Composio tools |
+
+---
+
+## 🔌 MCP Support
+
+SynthClaw supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers, letting you plug in any MCP-compatible tool server.
+
+Add a server by pasting its JSON config in Telegram:
+
+```
+/mcp add {"mcpServers":{"my-server":{"command":"npx","args":["-y","@my/mcp-server"]}}}
+```
+
+| Command | Description |
+|---------|-------------|
+| `/mcp` | List configured MCP servers |
+| `/mcp add <json>` | Add a new MCP server from its JSON config |
+| `/mcp remove <name>` | Remove a configured MCP server |
+
+Supports `stdio`, `sse`, and `streamable-http` transports.
 
 ---
 
@@ -340,6 +408,3 @@ Just keep it simple — SynthClaw's entire point is being small and readable.
 ---
 
 **Made by [@truehannan](https://github.com/truehannan)**
-| `/skills` | List, install (`.zip` or URL), or remove skills |
-- 🧩 **Skills System** — Drop in `.zip` skill packs (each with a `SKILL.md`) to extend the agent's behaviour; install via `/skills install <url>` or by sending a `.zip` directly in chat
-- 📊 **Live Progress Messages** — Long-running tool chains edit a single "Working…" message in place so you always see real-time step updates
