@@ -1,30 +1,28 @@
-// SYNTHCLAW block-character wordmark (proper W letter)
+// SYNTHCLAW block-character wordmark
 export const SYNTHCLAW_BLOCK = [
   "\u2588\u2580\u2580 \u2588\u2584\u2588 \u2588\u2584 \u2588 \u2580\u2588\u2580 \u2588 \u2588 \u2588\u2580\u2580 \u2588   \u2588\u2580\u2588 \u2588 \u2588 \u2588 \u2588",
   "\u2580\u2580\u2588  \u2588  \u2588 \u2580\u2588  \u2588  \u2588\u2580\u2588 \u2588   \u2588   \u2588\u2580\u2588 \u2588\u2584\u2588\u2584\u2588 \u2588",
   "\u2580\u2580\u2580  \u2580  \u2580  \u2580  \u2580  \u2580 \u2580 \u2580\u2580\u2580 \u2580\u2580\u2580 \u2580 \u2580 \u2580 \u2580 \u2580 \u2580",
 ];
 
-// Scorpion/claw icon — 2-frame animation (alternates every 1s)
-// Frame 1: tail slightly left
+// Scorpion icon — 2-frame animation (tail direction changes)
+// Frame 1: tail left
 export const ICON_FRAME_1 = [
   "   \u2588\u2580\u2588",
   "     \u2588",
-  "  \u2588\u2588\u2588\u2588\u2588\u2588\u2588",
-  "\u2588\u2580\u2588\u2584\u2588\u2588\u2588\u2584\u2588\u2580\u2588",
-  "\u2588\u2584       \u2584\u2588",
-  "\u2588\u2584\u2584     \u2584\u2584\u2588",
+  "  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588",
+  "\u2588\u2580\u2588\u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584\u2588\u2580\u2588",
+  "\u2588\u2584  \u2588     \u2588  \u2584\u2588",
 ];
 
-// Frame 2: tail shifted right
+// Frame 2: tail right
 export const ICON_FRAME_2 = [
-  "     \u2588\u2580\u2588",
-  "     \u2588",
-  "  \u2588\u2588\u2588\u2588\u2588\u2588\u2588",
-  "\u2588\u2580\u2588\u2584\u2588\u2588\u2588\u2584\u2588\u2580\u2588",
-  "\u2588\u2584       \u2584\u2588",
-  "\u2588\u2584\u2584     \u2584\u2584\u2588",
+  "         \u2588\u2580\u2588",
+  "         \u2588",
+  "  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588",
+  "\u2588\u2580\u2588\u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584\u2588\u2580\u2588",
+  "\u2588\u2584  \u2588     \u2588  \u2584\u2588",
 ];
 
-// Legacy export
+// Legacy
 export const SYNTHCLAW_ASCII = "\n  " + SYNTHCLAW_BLOCK.join("\n  ") + "\n";
