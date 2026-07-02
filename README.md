@@ -1,6 +1,6 @@
 # SynthClaw CoAgent
 
-<img src=/public/icon.png alt=synthclaw style="length: 100px; width: 100px;" align="center"/>
+<p align="center"><img src=/public/icon.png alt=synthclaw style="length: 100px; width: 100px;"/></p>
 
 **Your personal AI agent with full server control, 50 tools, 8 LLM providers, 1000+ app integrations, and an interactive CLI dashboard.**
 
