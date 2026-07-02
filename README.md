@@ -1,6 +1,6 @@
 # SynthClaw CoAgent
 
-![synthclaw](/public/icons.png)
+![synthclaw](/public/icon.png)
 
 **Your personal AI agent with full server control, 50 tools, 8 LLM providers, 1000+ app integrations, and an interactive CLI dashboard.**
 
