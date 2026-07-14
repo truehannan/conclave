@@ -11,7 +11,6 @@ import Providers from "@/pages/Providers";
 import Memory from "@/pages/Memory";
 import Credentials from "@/pages/Credentials";
 import Skills from "@/pages/Skills";
-import Society from "@/pages/Society";
 import Settings from "@/pages/Settings";
 import Integrations from "@/pages/Integrations";
 import Channels from "@/pages/Channels";
@@ -74,7 +73,6 @@ export default function App() {
         <Route path="skills" element={<Skills />} />
         <Route path="integrations" element={<Integrations />} />
         <Route path="channels" element={<Channels />} />
-        <Route path="society" element={<Society />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

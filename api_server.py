@@ -1252,12 +1252,24 @@ async def composio_connect(toolkit: str, request: Request):
         if auth_resp.status_code == 200:
             auth_data = auth_resp.json()
             auth_configs = auth_data.get("items", auth_data.get("auth_configs", []))
-            # Find the config that MATCHES this toolkit (not just first result)
+            # Find the config that MATCHES this toolkit
             for ac in auth_configs:
-                ac_toolkit = ac.get("toolkit", ac.get("toolkit_slug", "")).lower()
+                ac_toolkit = ac.get("toolkit_slug") or ac.get("toolkit", "")
+                # toolkit field might be a dict with a slug key, or a plain string
+                if isinstance(ac_toolkit, dict):
+                    ac_toolkit = ac_toolkit.get("slug", "")
+                ac_toolkit = str(ac_toolkit).lower() if ac_toolkit else ""
                 if ac_toolkit == toolkit.lower() or not ac_toolkit:
                     auth_config_id = ac.get("id") or ac.get("nanoid", "")
                     break
+            # If no match by toolkit, just use the first one that's for this toolkit
+            if not auth_config_id and auth_configs:
+                # Last resort: pick first enabled config
+                for ac in auth_configs:
+                    acid = ac.get("id") or ac.get("nanoid", "")
+                    if acid:
+                        auth_config_id = acid
+                        break
         
         # Step 2: Create connection — use link endpoint if we have auth_config_id,
         # otherwise try direct connection with toolkit slug
