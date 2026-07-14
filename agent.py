@@ -168,8 +168,8 @@ def _provider_base_url(provider: str) -> str:
     if provider == "Qwen":
         return cfg.QWEN_API_BASE
     if provider == "Cloudflare":
-        # Cloudflare needs account_id in URL
-        account_id = cfg.CF_ACCOUNT_ID or ""
+        # Cloudflare needs account_id in URL — check DB first, then env
+        account_id = mem.get_memory("cf_account_id") or cfg.CF_ACCOUNT_ID or ""
         if account_id:
             return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
         return cfg.OPENAI_API_BASE
@@ -229,6 +229,10 @@ def _resolve_client_and_model(selected_model: str) -> tuple[OpenAI, str, str]:
     elif provider == "HuggingFace":
         api_model = selected_model.split(":", 1)[1]
     elif provider == "Google":
+        api_model = selected_model.split(":", 1)[1]
+    elif provider == "Cloudflare":
+        api_model = selected_model.split(":", 1)[1]
+    elif provider == "Qwen":
         api_model = selected_model.split(":", 1)[1]
     elif provider == "OpenAI" and not force_gradient:
         api_model = selected_model.replace("openai-", "", 1)

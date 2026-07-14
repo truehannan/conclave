@@ -166,17 +166,70 @@ async function cmdProviders() {
 }
 
 async function sendMessage(msg) {
-  const apiKey = config.get("openai_api_key"), apiBase = config.get("openai_api_base"), model = config.get("default_model");
+  const apiKey = config.get("openai_api_key"), model = config.get("default_model");
   if (!apiKey) { console.log("  " + Y("No API key. Running /setup...")); await cmdSetup(); return; }
   chatHistory.push({ role: "user", content: msg });
+
+  // Use the local API server's agentic endpoint (same as frontend/Telegram)
+  const port = config.get("api_port") || 8000;
+  const tokenFile = join(getProjectRoot(), ".api_token");
+  let token = "";
+  try { token = existsSync(tokenFile) ? readFileSync(tokenFile, "utf-8").trim() : apiKey; } catch { token = apiKey; }
+
   process.stdout.write("  " + D("⠋ Thinking..."));
+
   try {
-    const msgs = [{ role: "system", content: "You are SynthClaw, a personal AI agent. Be concise and helpful." }, ...chatHistory.slice(-10)];
-    const resp = await fetch(`${apiBase}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model, messages: msgs, temperature: 0.7, max_tokens: 2048 }) });
-    const data = await resp.json();
+    const resp = await fetch(`http://127.0.0.1:${port}/api/chat/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Token": token },
+      body: JSON.stringify({ message: msg, model }),
+    });
+
     process.stdout.write("\r" + " ".repeat(30) + "\r");
-    if (!resp.ok) { console.log("  " + Y("✗") + " " + (data.error?.message || `HTTP ${resp.status}`)); chatHistory.pop(); return; }
-    const reply = (data.choices?.[0]?.message?.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+    if (!resp.ok) {
+      const errData = await resp.text();
+      console.log("  " + Y("✗") + " HTTP " + resp.status + ": " + errData.slice(0, 100));
+      chatHistory.pop();
+      return;
+    }
+
+    // Read SSE stream
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let finalReply = "";
+    let hasOutput = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      for (const line of chunk.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === "thinking" && !hasOutput) {
+            process.stdout.write("  " + D("⠋ " + (event.content || "Processing...")));
+          } else if (event.type === "progress" || event.type === "agent_step") {
+            process.stdout.write("\r" + " ".repeat(60) + "\r");
+            console.log("  " + RD("──") + D(" " + (event.content || "").slice(0, 70)));
+            hasOutput = true;
+          } else if (event.type === "text") {
+            console.log("  " + D(event.content || ""));
+            hasOutput = true;
+          } else if (event.type === "done") {
+            finalReply = event.full || "";
+          } else if (event.type === "error") {
+            finalReply = "Error: " + (event.message || event.content || "Unknown");
+          }
+        } catch {}
+      }
+    }
+
+    if (!hasOutput) process.stdout.write("\r" + " ".repeat(30) + "\r");
+
+    // Display final reply
+    const reply = (finalReply || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
     chatHistory.push({ role: "assistant", content: reply });
     console.log("  " + RD(BX.tl + "── ") + R("SYNTHCLAW") + RD(" " + "─".repeat(30) + BX.tr));
     for (const line of (reply || "(empty)").split("\n")) console.log("  " + RD(BX.v) + " " + line);
@@ -184,7 +237,9 @@ async function sendMessage(msg) {
     console.log("");
   } catch (e) {
     process.stdout.write("\r" + " ".repeat(30) + "\r");
-    console.log("  " + Y("✗") + " " + e.message); chatHistory.pop();
+    console.log("  " + Y("✗") + " " + e.message);
+    console.log("  " + D("Is the API server running? Try: synthclaw start"));
+    chatHistory.pop();
   }
 }
 
