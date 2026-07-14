@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Send, Square, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Plus, Brain } from "lucide-react";
-import { chat, models, sessions, society, providers as providersApi } from "@/lib/api";
+import { Send, Square, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Plus, Brain, Puzzle } from "lucide-react";
+import { chat, models, sessions, society, providers as providersApi, skills as skillsApi } from "@/lib/api";
 import type { Message } from "@/lib/types";
 import ReactMarkdown from "react-markdown";
 import Mascot from "@/components/Mascot";
@@ -36,6 +36,12 @@ export default function Chat() {
   // Agent society sidebar
   const [showSociety, setShowSociety] = useState(false);
   const [societyData, setSocietyData] = useState<any>(null);
+
+  // Skills picker
+  const [showSkillsPicker, setShowSkillsPicker] = useState(false);
+  const [skillsList, setSkillsList] = useState<any[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [skillsSearch, setSkillsSearch] = useState("");
 
   // Load chat when session changes
   useEffect(() => {
@@ -99,10 +105,15 @@ export default function Chat() {
 
     try {
       const res = await chat.sendStream(userMsg, currentModel || undefined);
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(errBody || `HTTP ${res.status}`);
+      }
       if (!res.body) throw new Error("No response body");
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
+      let gotDone = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -113,10 +124,17 @@ export default function Chat() {
           try {
             const data = JSON.parse(line.slice(6));
             if (data.token) { fullText += data.token; setStreamText(fullText); }
-            if (data.done) { setMessages(prev => [...prev, { role: "assistant", content: data.full || fullText }]); setStreamText(""); }
-            if (data.error) { setMessages(prev => [...prev, { role: "assistant", content: `Error: ${data.error}` }]); setStreamText(""); }
+            if (data.done) { gotDone = true; setMessages(prev => [...prev, { role: "assistant", content: data.full || fullText }]); setStreamText(""); }
+            if (data.error) { gotDone = true; setMessages(prev => [...prev, { role: "assistant", content: `Error: ${data.error}` }]); setStreamText(""); }
           } catch {}
         }
+      }
+      // If stream ended without explicit done/error, commit whatever we got
+      if (!gotDone && fullText) {
+        setMessages(prev => [...prev, { role: "assistant", content: fullText }]);
+        setStreamText("");
+      } else if (!gotDone && !fullText) {
+        setMessages(prev => [...prev, { role: "assistant", content: "No response received. Check your model/provider configuration." }]);
       }
     } catch (err: any) {
       setMessages(prev => [...prev, { role: "assistant", content: `Error: ${err.message}` }]);
@@ -171,6 +189,21 @@ export default function Chat() {
       try { const res = await society.status(); setSocietyData(res); } catch {}
     }
     setShowSociety(!showSociety);
+  }
+
+  async function openSkillsPicker() {
+    if (showSkillsPicker) { setShowSkillsPicker(false); return; }
+    setShowSkillsPicker(true);
+    if (skillsList.length === 0) {
+      try {
+        const res = await skillsApi.list();
+        setSkillsList(res.skills || []);
+      } catch {}
+    }
+  }
+
+  function toggleSkill(name: string) {
+    setSelectedSkills(prev => prev.includes(name) ? prev.filter(s => s !== name) : [...prev, name]);
   }
 
   function handleNewChat() {
@@ -255,8 +288,9 @@ export default function Chat() {
         {/* Input */}
         <div className="border-t border-border bg-card px-4 py-3">
           <div className="mx-auto max-w-3xl">
-            {/* Model selector row */}
+            {/* Model + Skills selector row */}
             <div className="flex items-center gap-2 mb-2">
+              {/* Model picker */}
               <div className="relative">
                 <button onClick={openModelPicker}
                   className="flex items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-[9px] text-muted hover:border-primary hover:text-primary">
@@ -301,6 +335,46 @@ export default function Chat() {
                   </div>
                 )}
               </div>
+              {/* Skills picker */}
+              <div className="relative">
+                <button onClick={openSkillsPicker}
+                  className="flex items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-[9px] text-muted hover:border-primary hover:text-primary">
+                  <Puzzle className="h-2.5 w-2.5" />
+                  <span>Skills{selectedSkills.length > 0 ? ` (${selectedSkills.length})` : ""}</span>
+                  <ChevronDown className="h-2.5 w-2.5" />
+                </button>
+                {showSkillsPicker && (
+                  <div className="absolute left-0 bottom-full z-50 mb-1 w-64 max-h-56 overflow-hidden rounded-sm border border-border bg-card shadow-lg flex flex-col">
+                    <div className="p-2 border-b border-border">
+                      <input value={skillsSearch} onChange={e => setSkillsSearch(e.target.value)} placeholder="Search skills..."
+                        autoFocus className="w-full rounded-sm border border-border bg-background px-2 py-1 text-[10px] outline-none focus:border-primary" />
+                    </div>
+                    <div className="overflow-y-auto flex-1 p-1">
+                      {skillsList.filter(s => !skillsSearch || (s.name || s).toLowerCase().includes(skillsSearch.toLowerCase())).map((s: any, i: number) => {
+                        const name = s.name || s;
+                        const active = selectedSkills.includes(name);
+                        return (
+                          <button key={i} onClick={() => toggleSkill(name)}
+                            className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[10px] ${active ? "bg-primary/10 text-primary" : "text-muted hover:bg-card-hover hover:text-foreground"}`}>
+                            <span className={`h-2 w-2 rounded-full border ${active ? "bg-primary border-primary" : "border-muted"}`} />
+                            <span className="truncate">{name}</span>
+                          </button>
+                        );
+                      })}
+                      {skillsList.length === 0 && <p className="px-2 py-3 text-[9px] text-muted text-center">No skills installed</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Selected skills tags */}
+              {selectedSkills.length > 0 && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {selectedSkills.map(s => (
+                    <span key={s} onClick={() => toggleSkill(s)}
+                      className="rounded-full bg-primary/10 px-2 py-0.5 text-[8px] text-primary cursor-pointer hover:bg-primary/20">{s} x</span>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Input row */}
             <div className="flex items-end gap-2">
