@@ -686,12 +686,12 @@ async def list_skills():
 
 
 @app.post("/api/skills/install", dependencies=[Depends(verify_token)])
-async def install_skill(item: SkillInstallItem):
+async def api_install_skill(item: SkillInstallItem):
     """Install a skill from source."""
     try:
         from tools import install_skill
-        result = install_skill({"source": item.source})
-        return json.loads(result) if isinstance(result, str) else {"result": result}
+        result = install_skill(item.source)  # pass string directly, not dict
+        return result if isinstance(result, dict) else json.loads(result) if isinstance(result, str) else {"result": str(result)}
     except ImportError:
         raise HTTPException(status_code=400, detail="Skills system not available (agent not fully initialized)")
     except Exception as e:
@@ -699,12 +699,12 @@ async def install_skill(item: SkillInstallItem):
 
 
 @app.delete("/api/skills/{name}", dependencies=[Depends(verify_token)])
-async def uninstall_skill(name: str):
+async def api_uninstall_skill(name: str):
     """Uninstall a skill."""
     try:
         from tools import uninstall_skill
-        result = uninstall_skill({"name": name})
-        return json.loads(result) if isinstance(result, str) else {"result": result}
+        result = uninstall_skill(name)  # pass string directly
+        return result if isinstance(result, dict) else json.loads(result) if isinstance(result, str) else {"result": str(result)}
     except ImportError:
         raise HTTPException(status_code=400, detail="Skills system not available")
     except Exception as e:
@@ -1015,6 +1015,61 @@ async def composio_connections():
         return json.loads(result) if isinstance(result, str) else {"connections": []}
     except Exception:
         return {"connections": [], "available": True}
+
+
+@app.get("/api/composio/tools", dependencies=[Depends(verify_token)])
+async def composio_tools(page: int = 1, search: str = "", toolkit: str = ""):
+    """List available Composio tools (fetched live from Composio API)."""
+    composio_key = cfg.COMPOSIO_API_KEY or mem.get_credential("COMPOSIO_API_KEY") or ""
+    if not composio_key:
+        return {"items": [], "available": False, "total_pages": 0}
+    try:
+        import requests as req
+        params = {"page": page, "limit": 20}
+        if search:
+            params["search"] = search
+        if toolkit:
+            params["toolkit"] = toolkit
+        resp = req.get(
+            "https://backend.composio.dev/api/v3/tools",
+            headers={"x-api-key": composio_key},
+            params=params,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "items": data.get("items", []),
+                "total_pages": data.get("total_pages", 0),
+                "current_page": data.get("current_page", page),
+                "total_items": data.get("total_items", 0),
+                "available": True,
+            }
+        return {"items": [], "available": True, "total_pages": 0, "error": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"items": [], "available": True, "total_pages": 0, "error": str(e)}
+
+
+@app.post("/api/composio/connect/{toolkit}", dependencies=[Depends(verify_token)])
+async def composio_connect(toolkit: str, request: Request):
+    """Initiate OAuth connection for a Composio toolkit."""
+    composio_key = cfg.COMPOSIO_API_KEY or mem.get_credential("COMPOSIO_API_KEY") or ""
+    if not composio_key:
+        raise HTTPException(status_code=400, detail="Composio API key not configured")
+    try:
+        import requests as req
+        body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+        resp = req.post(
+            f"https://backend.composio.dev/api/v3/connectedAccounts",
+            headers={"x-api-key": composio_key, "Content-Type": "application/json"},
+            json={"integrationId": toolkit, "redirectUri": body.get("redirect_uri", "")},
+            timeout=10,
+        )
+        if resp.status_code in (200, 201):
+            return resp.json()
+        return {"error": f"HTTP {resp.status_code}", "detail": resp.text[:200]}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

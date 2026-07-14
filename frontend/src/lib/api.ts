@@ -129,6 +129,8 @@ export const apis = {
 
 export const composio = {
   connections: () => request("/composio/connections"),
+  tools: (page = 1, search = "", toolkit = "") => request(`/composio/tools?page=${page}&search=${encodeURIComponent(search)}&toolkit=${encodeURIComponent(toolkit)}`),
+  connect: (toolkit: string) => request(`/composio/connect/${toolkit}`, { method: "POST" }),
 };
 
 // ── MCP Servers ──────────────────────────────────────────────────────────────

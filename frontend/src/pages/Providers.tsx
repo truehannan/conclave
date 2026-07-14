@@ -7,6 +7,7 @@ export default function Providers() {
   const [list, setList] = useState<Provider[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [keyInput, setKeyInput] = useState("");
+  const [cfAccountId, setCfAccountId] = useState("");
   const [modelsList, setModelsList] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [currentModel, setCurrentModel] = useState("");
@@ -23,8 +24,16 @@ export default function Providers() {
 
   async function handleStoreKey() {
     if (!selected || !keyInput) return;
+    // For Cloudflare, also store account_id
+    if (selected === "Cloudflare" && cfAccountId) {
+      try {
+        const { memory } = await import("@/lib/api");
+        await memory.set("cf_account_id", cfAccountId);
+      } catch {}
+    }
     await api.storeKey(selected, keyInput);
     setKeyInput("");
+    setCfAccountId("");
     loadProviders();
   }
 
@@ -96,12 +105,23 @@ export default function Providers() {
       {selected && !modelsList.length && (
         <div className="mt-6 rounded-sm border border-border bg-card p-4">
           <p className="text-xs text-muted mb-2">Store API key for {selected}</p>
+          {selected === "Cloudflare" && (
+            <div className="mb-2">
+              <input value={cfAccountId} onChange={(e) => setCfAccountId(e.target.value)}
+                placeholder="Cloudflare Account ID"
+                className="w-full rounded-sm border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary mb-2" />
+            </div>
+          )}
           <div className="flex gap-2">
             <input type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)}
-              placeholder="sk-..." className="flex-1 rounded-sm border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
-            <button onClick={handleStoreKey} disabled={!keyInput}
+              placeholder={selected === "Cloudflare" ? "Cloudflare API Token" : "sk-..."}
+              className="flex-1 rounded-sm border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
+            <button onClick={handleStoreKey} disabled={!keyInput || (selected === "Cloudflare" && !cfAccountId)}
               className="rounded-sm bg-primary px-4 py-2 text-sm text-white hover:bg-primary-hover disabled:opacity-30">Save</button>
           </div>
+          {selected === "Cloudflare" && (
+            <p className="text-[9px] text-muted mt-2">Cloudflare Workers AI requires both Account ID and API Token.</p>
+          )}
         </div>
       )}
 

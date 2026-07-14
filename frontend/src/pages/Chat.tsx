@@ -141,10 +141,10 @@ export default function Chat() {
 
   async function openModelPicker() {
     if (showModelPicker) { setShowModelPicker(false); return; }
+    setShowModelPicker(true);
     if (providerModels.length === 0) {
       setLoadingModels(true);
       try {
-        // Fetch providers list then fetch models for each configured one
         const provRes = await providersApi.list();
         const provList = provRes.providers || [];
         const grouped: ProviderModels[] = [];
@@ -160,7 +160,6 @@ export default function Chat() {
       } catch {}
       setLoadingModels(false);
     }
-    setShowModelPicker(true);
   }
 
   function toggleProviderExpand(idx: number) {
