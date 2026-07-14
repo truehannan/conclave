@@ -11,7 +11,6 @@ const NAV = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/chat", icon: MessageSquare, label: "Chat" },
   { to: "/providers", icon: Server, label: "Providers" },
-  { to: "/society", icon: Brain, label: "Society" },
   { to: "/memory", icon: BookOpen, label: "Memory" },
   { to: "/credentials", icon: Key, label: "Credentials" },
   { to: "/skills", icon: Puzzle, label: "Skills" },

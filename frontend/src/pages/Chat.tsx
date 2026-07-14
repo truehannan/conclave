@@ -240,8 +240,9 @@ export default function Chat() {
             <span className="text-[10px] text-muted truncate max-w-[200px]">{currentModel || "No model"}</span>
           </div>
           <button onClick={toggleSociety} title="Agent Society"
-            className={`rounded-sm border p-1.5 ${showSociety ? "border-primary text-primary" : "border-border text-muted hover:border-primary hover:text-primary"}`}>
+            className={`flex items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-[10px] font-medium ${showSociety ? "border-primary text-primary bg-primary/5" : "border-border text-muted hover:border-primary hover:text-primary"}`}>
             <Brain className="h-3.5 w-3.5" />
+            <span>Agents</span>
           </button>
         </div>
 
