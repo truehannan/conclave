@@ -1,7 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { apis, composio } from "@/lib/api";
-import { Link2, Unplug, Globe, Zap } from "lucide-react";
-import Mascot from "@/components/Mascot";
+import { Link2, Unplug, Globe, Zap, Search, ExternalLink, Loader2 } from "lucide-react";
+
+interface ComposioTool {
+  slug: string;
+  name: string;
+  description: string;
+  toolkit?: { slug: string; name: string; logo: string };
+  tags?: string[];
+  no_auth?: boolean;
+}
 
 interface ApiEntry {
   name: string;
@@ -11,133 +19,171 @@ interface ApiEntry {
   auth_cred: string;
 }
 
-interface ComposioConnection {
-  app?: string;
-  name?: string;
-  status?: string;
-  id?: string;
-}
-
 export default function Integrations() {
   const [apiList, setApiList] = useState<ApiEntry[]>([]);
-  const [connections, setConnections] = useState<ComposioConnection[]>([]);
   const [composioAvailable, setComposioAvailable] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [tools, setTools] = useState<ComposioTool[]>([]);
+  const [toolsSearch, setToolsSearch] = useState("");
+  const [toolsPage, setToolsPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalItems, setTotalItems] = useState(0);
+  const [loadingTools, setLoadingTools] = useState(false);
+  const [connecting, setConnecting] = useState("");
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    Promise.all([loadApis(), loadComposio()]).finally(() => setLoading(false));
+    loadApis();
+    loadTools(1, "");
   }, []);
 
   async function loadApis() {
-    try {
-      const res = await apis.list();
-      setApiList(res.apis || []);
-    } catch { setApiList([]); }
+    try { const res = await apis.list(); setApiList(res.apis || []); } catch {}
   }
 
-  async function loadComposio() {
+  async function loadTools(page: number, search: string) {
+    setLoadingTools(true);
     try {
-      const res = await composio.connections();
-      setConnections(res.connections || []);
+      const res = await composio.tools(page, search);
       setComposioAvailable(res.available !== false);
+      setTools(res.items || []);
+      setTotalPages(res.total_pages || 0);
+      setTotalItems(res.total_items || 0);
+      setToolsPage(page);
     } catch {
       setComposioAvailable(false);
+    } finally {
+      setLoadingTools(false);
     }
   }
 
+  function handleSearch(value: string) {
+    setToolsSearch(value);
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    searchTimeout.current = setTimeout(() => loadTools(1, value), 400);
+  }
+
+  async function handleConnect(toolkit: string) {
+    setConnecting(toolkit);
+    try {
+      const res = await composio.connect(toolkit);
+      if (res.redirectUrl) {
+        window.open(res.redirectUrl, "_blank");
+      }
+    } catch {}
+    setConnecting("");
+  }
+
   return (
-    <div className="p-6">
-      <h1 className="text-lg font-bold">[+] Integrations</h1>
-      <p className="mb-6 text-xs text-muted">Connected apps and registered APIs</p>
+    <div className="flex h-full flex-col">
+      {/* Header */}
+      <div className="border-b border-border bg-card px-4 py-3">
+        <h1 className="text-sm font-bold">[+] Integrations</h1>
+        <p className="text-[9px] text-muted">
+          {composioAvailable
+            ? `${totalItems} tools available — connect apps for your agent`
+            : "Configure COMPOSIO_API_KEY in setup to enable 1000+ integrations"}
+        </p>
+      </div>
 
-      {/* Composio Section */}
-      <div className="mb-8">
-        <div className="flex items-center gap-2 mb-3">
-          <Zap className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-bold">Composio</h2>
-          {!composioAvailable && (
-            <span className="rounded-full bg-muted/20 px-2 py-0.5 text-[9px] text-muted">Not configured</span>
-          )}
-        </div>
+      {composioAvailable ? (
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {/* Search */}
+          <div className="px-4 py-3 border-b border-border">
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
+              <input value={toolsSearch} onChange={e => handleSearch(e.target.value)}
+                placeholder="Search tools (gmail, github, slack, notion...)"
+                className="w-full rounded-sm border border-border bg-background pl-9 pr-3 py-2 text-xs outline-none focus:border-primary" />
+            </div>
+          </div>
 
-        {composioAvailable ? (
-          connections.length > 0 ? (
-            <div className="space-y-1">
-              {connections.map((c, i) => (
-                <div key={i} className="flex items-center justify-between rounded-sm border border-border bg-card px-4 py-2.5">
-                  <div className="flex items-center gap-3">
-                    <Link2 className="h-3.5 w-3.5 text-success" />
-                    <span className="text-xs font-semibold text-foreground">{c.app || c.name || "Unknown"}</span>
-                    {c.status && (
-                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
-                        c.status === "active" ? "bg-success/20 text-success" : "bg-muted/20 text-muted"
-                      }`}>
-                        {c.status}
-                      </span>
+          {/* Tools grid */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {loadingTools && tools.length === 0 && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <span className="ml-2 text-xs text-muted">Loading tools...</span>
+              </div>
+            )}
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+              {tools.map(tool => (
+                <div key={tool.slug} className="rounded-sm border border-border bg-card p-3 hover:border-muted transition-colors">
+                  <div className="flex items-start gap-2">
+                    {tool.toolkit?.logo && (
+                      <img src={tool.toolkit.logo} alt="" className="h-5 w-5 rounded-sm flex-shrink-0 mt-0.5" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-semibold text-foreground truncate">{tool.toolkit?.name || tool.name}</p>
+                      <p className="text-[9px] text-muted mt-0.5 line-clamp-2">{tool.description}</p>
+                    </div>
+                  </div>
+                  {tool.tags && tool.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {tool.tags.slice(0, 3).map(tag => (
+                        <span key={tag} className="rounded-full bg-muted/10 px-1.5 py-0.5 text-[8px] text-muted">{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-[8px] text-muted font-mono">{tool.slug}</span>
+                    {!tool.no_auth ? (
+                      <button onClick={() => handleConnect(tool.toolkit?.slug || tool.slug)}
+                        disabled={connecting === (tool.toolkit?.slug || tool.slug)}
+                        className="flex items-center gap-1 rounded-sm bg-primary/10 px-2 py-0.5 text-[9px] text-primary hover:bg-primary/20 disabled:opacity-50">
+                        {connecting === (tool.toolkit?.slug || tool.slug)
+                          ? <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                          : <ExternalLink className="h-2.5 w-2.5" />}
+                        Connect
+                      </button>
+                    ) : (
+                      <span className="text-[8px] text-success">No auth needed</span>
                     )}
                   </div>
-                  {c.id && <span className="text-[10px] text-muted">{c.id.slice(0, 8)}...</span>}
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="rounded-sm border border-border bg-card p-6 text-center">
-              <Unplug className="mx-auto h-6 w-6 text-muted mb-2" />
-              <p className="text-xs text-muted">No Composio connections yet.</p>
-              <p className="text-[10px] text-muted mt-1">
-                Use <code className="text-primary">/composio connect &lt;app&gt;</code> in chat to connect an app.
-              </p>
-            </div>
-          )
-        ) : (
-          <div className="rounded-sm border border-border bg-card p-6 text-center">
-            <p className="text-xs text-muted">Composio not configured.</p>
-            <p className="text-[10px] text-muted mt-1">
-              Set <code className="text-primary">COMPOSIO_API_KEY</code> in your environment to enable 200+ app integrations.
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 mt-4 py-3">
+                <button onClick={() => loadTools(toolsPage - 1, toolsSearch)} disabled={toolsPage <= 1}
+                  className="rounded-sm border border-border px-3 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30">Prev</button>
+                <span className="text-[10px] text-muted">Page {toolsPage} of {totalPages}</span>
+                <button onClick={() => loadTools(toolsPage + 1, toolsSearch)} disabled={toolsPage >= totalPages}
+                  className="rounded-sm border border-border px-3 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30">Next</button>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center max-w-sm">
+            <Zap className="h-10 w-10 text-muted mx-auto mb-3" />
+            <p className="text-sm text-muted">Composio not configured</p>
+            <p className="text-[10px] text-muted mt-2">
+              Add your COMPOSIO_API_KEY in the Setup Wizard or Settings to enable 1000+ app integrations (Gmail, GitHub, Slack, Notion, etc.)
             </p>
           </div>
-        )}
-      </div>
-
-      {/* Registered APIs Section */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Globe className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-bold">Registered APIs</h2>
         </div>
+      )}
 
-        {apiList.length > 0 ? (
-          <div className="space-y-1">
-            {apiList.map((a) => (
-              <div key={a.name} className="flex items-center justify-between rounded-sm border border-border bg-card px-4 py-2.5">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-foreground">{a.name}</span>
-                    <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
-                      a.enabled ? "bg-success/20 text-success" : "bg-muted/20 text-muted"
-                    }`}>
-                      {a.enabled ? "active" : "disabled"}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[10px] text-muted truncate">
-                    {a.base_url}
-                    {a.description && ` — ${a.description}`}
-                  </p>
-                </div>
-                <span className="text-[10px] text-muted ml-2">cred: {a.auth_cred}</span>
+      {/* Registered APIs section */}
+      {apiList.length > 0 && (
+        <div className="border-t border-border p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Globe className="h-3.5 w-3.5 text-primary" />
+            <span className="text-[10px] font-semibold text-muted">Registered APIs ({apiList.length})</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {apiList.map(a => (
+              <div key={a.name} className="rounded-sm border border-border bg-card px-3 py-1.5 text-[9px]">
+                <span className="font-medium text-foreground">{a.name}</span>
+                <span className="text-muted ml-1">({a.base_url})</span>
               </div>
             ))}
           </div>
-        ) : (
-          <div className="rounded-sm border border-border bg-card p-6 text-center">
-            <Mascot className="mx-auto mb-3 opacity-50" />
-            <p className="text-xs text-muted">No APIs registered.</p>
-            <p className="text-[10px] text-muted mt-1">
-              Use <code className="text-primary">/api register &lt;name&gt; &lt;base_url&gt;</code> in chat to add one.
-            </p>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
