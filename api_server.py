@@ -375,7 +375,7 @@ async def chat_send(msg: ChatMessage):
             return StreamingResponse(error_gen(), media_type="text/event-stream")
 
         from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
 
     # Build messages for LLM
     system_prompt = (
