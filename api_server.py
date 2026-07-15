@@ -1151,14 +1151,33 @@ async def list_apis():
 
 @app.get("/api/composio/connections", dependencies=[Depends(verify_token)])
 async def composio_connections():
-    """List Composio connections."""
+    """List Composio connected accounts (fetched live from Composio API)."""
     composio_key = cfg.COMPOSIO_API_KEY or mem.get_credential("COMPOSIO_API_KEY") or ""
     if not composio_key:
         return {"connections": [], "available": False}
     try:
-        from tools import composio_list_connections
-        result = composio_list_connections({})
-        return json.loads(result) if isinstance(result, str) else {"connections": []}
+        import requests as req
+        resp = req.get(
+            "https://backend.composio.dev/api/v3/connected_accounts",
+            headers={"x-api-key": composio_key},
+            params={"limit": 100},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("items", data.get("connected_accounts", []))
+            connections = []
+            for item in items:
+                toolkit = item.get("toolkit", {})
+                connections.append({
+                    "id": item.get("id") or item.get("nanoid", ""),
+                    "app": toolkit.get("name") or toolkit.get("slug", "") if isinstance(toolkit, dict) else str(toolkit),
+                    "slug": toolkit.get("slug", "") if isinstance(toolkit, dict) else str(toolkit),
+                    "status": item.get("status", "unknown"),
+                    "user_id": item.get("user_id", ""),
+                })
+            return {"connections": connections, "available": True}
+        return {"connections": [], "available": True}
     except Exception:
         return {"connections": [], "available": True}
 
