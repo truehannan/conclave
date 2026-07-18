@@ -1441,9 +1441,9 @@ async def composio_tools(page: int = 1, search: str = "", toolkit: str = ""):
 
 @app.post("/api/composio/connect/{toolkit}", dependencies=[Depends(verify_token)])
 async def composio_connect(toolkit: str, request: Request):
-    """Connect a Composio toolkit using the Session → Link flow.
-    This works for ALL auth types (OAuth, API key, bearer, basic).
-    Creates a session, then links the toolkit — Composio's hosted page handles credential collection."""
+    """Connect a Composio toolkit. Uses auth_config + Connect Link.
+    Works for OAuth apps (Gmail, GitHub, Slack, etc.)
+    Non-OAuth apps may need setup from the Composio dashboard first."""
     composio_key = cfg.COMPOSIO_API_KEY or mem.get_credential("COMPOSIO_API_KEY") or ""
     if not composio_key:
         raise HTTPException(status_code=400, detail="Composio API key not configured")
@@ -1451,32 +1451,72 @@ async def composio_connect(toolkit: str, request: Request):
     try:
         import requests as req
         headers = {"x-api-key": composio_key, "Content-Type": "application/json"}
-        base = "https://backend.composio.dev/api/v3"
 
-        # Step 1: Create a session for this user
-        session_resp = req.post(
-            f"{base}/tool_router/session",
+        auth_config_id = ""
+
+        # Try creating auth_config with managed auth (works for OAuth apps)
+        create_resp = req.post(
+            "https://backend.composio.dev/api/v3/auth_configs",
             headers=headers,
             json={
-                "user_id": "conclave",
-                "toolkits": {"enabled": [toolkit]},
+                "toolkit": {"slug": toolkit},
+                "auth_config": {
+                    "type": "use_composio_managed_auth",
+                    "credentials": {},
+                    "restrict_to_following_tools": [],
+                },
             },
             timeout=10,
         )
-        if session_resp.status_code not in (200, 201):
-            return {"error": f"Failed to create session: HTTP {session_resp.status_code}", "detail": session_resp.text[:300]}
 
-        session_data = session_resp.json()
-        session_id = session_data.get("session_id", "")
-        if not session_id:
-            return {"error": "No session_id returned from Composio"}
+        if create_resp.status_code in (200, 201):
+            data = create_resp.json()
+            if isinstance(data.get("auth_config"), dict):
+                auth_config_id = data["auth_config"].get("id") or data["auth_config"].get("nanoid", "")
+            if not auth_config_id:
+                auth_config_id = data.get("id") or data.get("nanoid") or data.get("auth_config_id", "")
+        elif create_resp.status_code == 409:
+            # Already exists — find it
+            list_resp = req.get(
+                "https://backend.composio.dev/api/v3/auth_configs",
+                headers=headers,
+                params={"toolkit_slug": toolkit},
+                timeout=10,
+            )
+            if list_resp.status_code == 200:
+                for ac in list_resp.json().get("items", []):
+                    tk = ac.get("toolkit_slug") or ""
+                    if not tk:
+                        tk_obj = ac.get("toolkit", "")
+                        tk = tk_obj.get("slug", "") if isinstance(tk_obj, dict) else str(tk_obj) if tk_obj else ""
+                    if tk.lower() == toolkit.lower():
+                        auth_config_id = ac.get("id") or ac.get("nanoid", "")
+                        break
+        elif create_resp.status_code == 400:
+            # Non-OAuth app — no managed auth available
+            # Try to find an existing auth_config (may have been created from dashboard)
+            list_resp = req.get(
+                "https://backend.composio.dev/api/v3/auth_configs",
+                headers=headers,
+                params={"toolkit_slug": toolkit},
+                timeout=10,
+            )
+            if list_resp.status_code == 200:
+                items = list_resp.json().get("items", [])
+                if items:
+                    auth_config_id = items[0].get("id") or items[0].get("nanoid", "")
 
-        # Step 2: Link the toolkit — this returns a redirect URL to Composio's hosted auth page
-        # Works for OAuth (consent screen), API key (input form), bearer, basic, everything
+        if not auth_config_id:
+            return {
+                "error": f"Could not get auth_config for '{toolkit}'",
+                "detail": "This app doesn't have Composio managed auth. Set it up from the Composio dashboard (https://dashboard.composio.dev) first, then try again.",
+            }
+
+        # Create Connect Link — redirects user to Composio's hosted auth page
         link_resp = req.post(
-            f"{base}/tool_router/session/{session_id}/link",
+            "https://backend.composio.dev/api/v3/connected_accounts/link",
             headers=headers,
-            json={"toolkit": toolkit},
+            json={"auth_config_id": auth_config_id, "user_id": "conclave"},
             timeout=15,
         )
         if link_resp.status_code in (200, 201):
@@ -1484,7 +1524,6 @@ async def composio_connect(toolkit: str, request: Request):
             url = data.get("redirect_url") or data.get("redirectUrl") or data.get("url", "")
             if url:
                 return {"success": True, "redirectUrl": url}
-            # Some toolkits connect immediately without redirect
             return {"success": True, "message": f"Connected {toolkit}"}
 
         return {"error": f"Link failed: HTTP {link_resp.status_code}", "detail": link_resp.text[:300]}
