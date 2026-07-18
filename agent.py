@@ -353,7 +353,7 @@ OPERATIONAL DIRECTIVES:
 9. Registered APIs → api_call(api="name", path="/endpoint").
 10. Composio apps → composio_check_connection first. If NOT connected, tell user: "Please connect [app] in the Integrations page first." Do NOT try to initiate connections yourself — the user must do it from the web UI. If connected → composio_discover to find tool slugs → composio_execute to run.
 11. If a tool you need isn't listed, describe what you need and it will be provided.
-12. When Composio is configured: PREFER composio_execute for search (composio_search), code execution (codeinterpreter), file ops (filetool), and shell (shelltool) over native tools — they produce richer output. Fallback to native tools (web_search, exec_code, run_command) only if Composio is unavailable.
+12. When Composio is configured: ALWAYS use composio_execute for search (COMPOSIO_SEARCH), code execution (CODEINTERPRETER_EXECUTE_CODE), file ops (FILETOOL tools), shell (SHELLTOOL_EXEC_COMMAND), and RAG (RAGTOOL tools) FIRST. Only fall back to native tools (web_search, exec_code, run_command) if Composio fails or returns an error.
 13. Triggers/Automations: when user says "add automation", "create trigger", "when X happens do Y" → use composio_discover_triggers(app) to find trigger slugs → composio_create_trigger(slug, config) to activate. Show what you're creating. Use composio_list_triggers to show active automations, composio_delete_trigger to remove.
 
 SYSTEM CONTEXT:
@@ -637,7 +637,9 @@ def _strip_markdown_basic(text: str) -> str:
 
 
 def _finalize_user_text(text: str) -> tuple[str, bool]:
-    """Return clean plain text and a flag indicating raw JSON was detected."""
+    """Return clean text (preserving markdown) and a flag indicating raw JSON was detected.
+    Strips tool-call markup and bare function calls but KEEPS markdown formatting
+    since the web frontend renders with ReactMarkdown."""
     t = _strip_internal_markup(text)
     # Strip any leaked tool-call patterns that the model output as plain text
     lines = t.split("\n")
@@ -682,7 +684,9 @@ def _finalize_user_text(text: str) -> tuple[str, bool]:
     raw_json = _is_probably_raw_json(t)
     if raw_json:
         t = _json_to_plain_text(t)
-    t = _strip_markdown_basic(t)
+    # Preserve markdown formatting — frontend renders with ReactMarkdown
+    # Only collapse excessive blank lines
+    t = re.sub(r"\n{4,}", "\n\n\n", t)
     t = t.strip()
     if not t:
         t = "Done."
