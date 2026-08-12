@@ -161,12 +161,12 @@ MODEL_CATALOG = {
         "google:gemini-1.5-flash",
     ],
     "Cloudflare": [
-        "cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        "cloudflare:@cf/meta/llama-3.1-8b-instruct",
-        "cloudflare:@cf/mistral/mistral-7b-instruct-v0.2-lora",
-        "cloudflare:@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-        "cloudflare:@cf/qwen/qwen1.5-14b-chat-awq",
-        "cloudflare:@hf/google/gemma-7b-it",
+        "cloudflare:@cf/anthropic/claude-opus-5",
+        "cloudflare:@cf/moonshotai/kimi-k3",
+        "cloudflare:@cf/anthropic/claude-sonnet-5",
+        "cloudflare:@cf/moonshotai/kimi-k2.7-code",
+        "cloudflare:@cf/anthropic/claude-fable-5",
+        "cloudflare:@cf/nvidia/nemotron-3-120b-a12b",
     ],
 }
 
